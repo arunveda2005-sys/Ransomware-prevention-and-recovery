@@ -1,0 +1,30 @@
+# Web Framework
+Flask==3.0.0
+Flask-CORS==4.0.0
+Flask-SocketIO==5.3.6
+python-socketio==5.11.0
+
+# Database
+pymongo==4.6.1
+python-dotenv==1.0.0
+
+# Authentication
+PyJWT==2.8.0
+bcrypt==4.1.2
+
+# ML & Data Science
+numpy
+pandas
+scikit-learn
+xgboost
+imbalanced-learn
+
+# For canary generation
+faker==22.0.0
+
+# Crypto
+pycryptodome==3.19.0
+cryptography
+
+# Production
+gunicorn==21.2.0
