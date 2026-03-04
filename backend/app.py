@@ -12,7 +12,8 @@ import bcrypt
 from bson import ObjectId
 
 # Add parent directory to path for blockchain module
-# (Handled by run.py now)
+# (Required for gunicorn which bypasses run.py)
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Load environment variables
 load_dotenv()
