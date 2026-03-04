@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import os
@@ -45,6 +45,7 @@ from system_a.blockchain_logger import BlockchainLogger
 from system_b.smart_canaries import SmartCanaryGenerator
 from system_b.data_protector import DataProtector
 from system_b.breach_calculator import BreachImpactCalculator
+from system_b.honeytoken_generator import DynamicHoneytokenGenerator
 
 # Initialize systems
 threat_detector = AgenticThreatDetector()
@@ -54,6 +55,10 @@ blockchain_logger.start_auto_mining()
 canary_generator = SmartCanaryGenerator(db)
 data_protector = DataProtector(master_key=os.getenv('ENCRYPTION_KEY'))
 breach_calculator = BreachImpactCalculator(db)
+
+# ✅ NEW: Initialize honeytoken generator
+honeytoken_generator = DynamicHoneytokenGenerator(db, socketio, blockchain_logger)
+
 
 # ==================== MIDDLEWARE ====================
 
@@ -75,25 +80,31 @@ def log_request():
     if client_ip in BANNED_IPS:
         # ALLOW LOGIN and UNBAN endpoints for demo recovery
         if request.path not in ['/api/auth/login', '/api/admin/ip/unban']:
-             return jsonify({'error': 'Access Denied - IP Banned'}), 403
+             return make_response(jsonify({'error': 'Access Denied - IP Banned'}), 403)
     
     # Check Session Risk (Smart Blocking)
     session_id = request.headers.get('Session-ID', 'unknown')
     if session_id != 'unknown':
         status = threat_detector.get_session_status(session_id)
         if status == 'block':
-            # Whitelist Admin & Auth endpoints to prevent lockout
-            # ALSO whitelist the Exfiltration Target so System B can be triggered! (Demo Logic)
-            if request.path.startswith('/api/admin') or request.path.startswith('/api/auth'):
-                # Special check: If it's the Exfiltration endpoint, we MUST let it through
-                # so the Canary/Blockchain logic (System B) can catch it.
-                if request.path == '/api/admin/users/export':
-                    pass
-                pass  # Allow admin to proceed even if flagged
-            else:
-                # Log the block attempt?
-                print(f"⛔ Pre-emptive block for session {session_id}")
-                return jsonify({'error': 'Access Denied - High Risk Detected'}), 403
+            # ✅ WHITELIST: Always allow these endpoints even if blocked
+            # This is CRITICAL for demo: attackers must reach System B endpoints!
+            whitelist = [
+                '/api/auth/login',              # Allow login
+                '/api/auth/register',           # Allow registration
+                '/api/admin/ip/unban',          # Allow admin to unban
+                '/api/admin/users/export',      # ⭐ MUST allow for System B demo
+                '/api/auth/verify-api-key',     # ⭐ Honeytoken callback
+                '/api/auth/reset-password',     # ⭐ Honeytoken callback
+                '/api/auth/verify-session'      # ⭐ Honeytoken callback
+            ]
+            
+            # Check if current path is whitelisted
+            if request.path not in whitelist:
+                # Block non-whitelisted endpoints
+                print(f"⛔ System A block for session {session_id} on {request.path}")
+                return make_response(jsonify({'error': 'Access Denied - High Risk Detected'}), 403)
+
     
     # Skip for static files
     if request.path.startswith('/static'):
@@ -324,13 +335,13 @@ def login():
         'exp': datetime.utcnow() + timedelta(hours=24)
     }, app.config['SECRET_KEY'], algorithm='HS256')
     
-    # Clear ML threat history for admin sessions
-    # This prevents admins from being blocked due to pre-login activity
-    if user['role'] == 'admin':
-        session_id = request.headers.get('Session-ID', 'unknown')
-        if session_id != 'unknown':
-            threat_detector.reset_session(session_id)
-            print(f"✓ Cleared threat history for admin session: {session_id}")
+    # ✅ Clear ML threat history for ALL users on login
+    # This prevents accumulated penalties from previous sessions
+    # Fresh start on each login
+    session_id = request.headers.get('Session-ID', 'unknown')
+    if session_id != 'unknown':
+        threat_detector.reset_session(session_id)
+        print(f"✓ Cleared threat history on login for session: {session_id[:8]}...")
     
     return jsonify({
         'message': 'Login successful',
@@ -708,15 +719,27 @@ def export_users():
             'message': 'No canary access detected'
         }
     
-    # Convert ObjectId AFTER checking canaries
+    # Convert ObjectId AFTER checking canaries and BEFORE injecting honeytokens
     for user in users:
         user['_id'] = str(user['_id'])
+    
+    # ✅ NEW: Inject honeytokens for post-export detection
+    export_metadata = {
+        'user_id': request.current_user.get('user_id'),
+        'session_id': request.headers.get('Session-ID', 'unknown'),
+        'timestamp': datetime.now(),
+        'ip_address': request.headers.get('X-Mock-IP', request.remote_addr)
+    }
+    
+    users = honeytoken_generator.inject_into_user_export(users, export_metadata)
     
     return jsonify({
         'users': users,
         'total': len(users),
-        'canary_alert': canary_check
+        'canary_alert': canary_check,
+        'honeytokens_injected': True  # ✅ NEW: Indicate honeytokens are active
     })
+
 
 @app.route('/api/admin/ip/unban', methods=['POST'])
 @token_required
@@ -789,6 +812,95 @@ def handle_join_admin():
 def handle_subscribe_threats():
     """Subscribe to threat updates"""
     emit('subscribed', {'feed': 'threats'})
+
+# ==================== HONEYTOKEN CALLBACKS ====================
+
+@app.route('/api/auth/verify-api-key', methods=['POST'])
+def verify_api_key_honeytoken():
+    """
+    API key verification endpoint
+    Catches when attacker tries to use fake API key from export
+    """
+    data = request.get_json()
+    api_key = data.get('api_key', '')
+    
+    # Check if it's a honeytoken
+    if api_key.startswith('sk_live_'):
+        if honeytoken_generator.is_honeytoken(api_key):
+            # 🚨 HONEYTOKEN TRIGGERED!
+            breach_data = honeytoken_generator.trigger_honeytoken_alert(api_key, request)
+            
+            # Return fake success to keep attacker engaged
+            return jsonify({
+                'valid': True,
+                'user_id': 'fake_user_' + secrets.token_hex(4),
+                'permissions': ['read'],
+                '_honeytoken_triggered': True  # Hidden flag for testing
+            }), 200
+    
+    # Normal validation (if real API key system exists)
+    return jsonify({'valid': False, 'error': 'Invalid API key'}), 401
+
+@app.route('/api/auth/reset-password', methods=['POST'])
+def reset_password_honeytoken():
+    """
+    Password reset endpoint
+    Catches when attacker tries to use fake reset token from export
+    """
+    data = request.get_json()
+    reset_token = data.get('token', '')
+    
+    # Check if it's a honeytoken
+    if 'reset_' in reset_token:
+        if honeytoken_generator.is_honeytoken(reset_token):
+            # 🚨 HONEYTOKEN TRIGGERED!
+            breach_data = honeytoken_generator.trigger_honeytoken_alert(reset_token, request)
+            
+            # Return fake success
+            return jsonify({
+                'success': True,
+                'message': 'Password reset successful',
+                'email': 'fake@example.com',
+                '_honeytoken_triggered': True
+            }), 200
+    
+    # Normal validation
+    return jsonify({'error': 'Invalid reset token'}), 400
+
+@app.route('/api/auth/verify-session', methods=['POST'])
+def verify_session_honeytoken():
+    """
+    Session verification endpoint
+    Catches when attacker tries to use fake session token from export
+    """
+    data = request.get_json()
+    session_token = data.get('session_token', '')
+    
+    # Check if it's a honeytoken
+    if 'sess_' in session_token:
+        if honeytoken_generator.is_honeytoken(session_token):
+            # 🚨 HONEYTOKEN TRIGGERED!
+            breach_data = honeytoken_generator.trigger_honeytoken_alert(session_token, request)
+            
+            # Return fake session data
+            return jsonify({
+                'valid': True,
+                'user_id': 'fake_user_' + secrets.token_hex(4),
+                'username': 'fake_user',
+                '_honeytoken_triggered': True
+            }), 200
+    
+    # Normal validation
+    return jsonify({'valid': False}), 401
+
+@app.route('/api/admin/honeytoken/stats', methods=['GET'])
+@token_required
+@admin_required
+def get_honeytoken_stats():
+    """Get honeytoken statistics for admin dashboard"""
+    stats = honeytoken_generator.get_honeytoken_statistics()
+    return jsonify(stats)
+
 
 # ==================== MAIN ====================
 

@@ -1,5 +1,6 @@
 import pickle
 import numpy as np
+import pandas as pd
 from datetime import datetime, timedelta
 from collections import defaultdict, deque
 import os
@@ -22,6 +23,9 @@ class AgenticThreatDetector:
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             models_dir = os.path.join(base_dir, 'ml_pipeline', 'models')
 
+        # Scaler for feature normalization
+        self.scaler = None
+        
         # Load all trained models
         self.models = self._load_models(models_dir)
         
@@ -49,19 +53,22 @@ class AgenticThreatDetector:
         # Decision history
         self.decision_history = []
         
-        # Feature columns
+        # Feature columns (HTTP-appropriate, matches training data)
         self.feature_cols = [
-            'request_rate', 'response_rate', 'data_sent_mb', 
-            'data_received_mb', 'total_data_mb', 'duration_seconds',
-            'upload_load_mbps', 'download_load_mbps', 'packet_ratio',
-            'mean_packet_size_sent', 'mean_packet_size_received',
-            'is_http', 'is_https', 'http_method_count', 
-            'is_established', 'state_ttl_count',
-            'inter_packet_time_sent', 'inter_packet_time_received'
+            'request_rate', 'unique_endpoints', 'endpoint_diversity',
+            'repeat_request_ratio', 'failed_request_ratio', 'post_get_ratio',
+            'session_duration_min', 'total_requests', 'avg_time_between_requests',
+            'request_time_variance', 'requests_per_minute', 'total_data_transferred_mb',
+            'avg_response_size_kb', 'sensitive_endpoint_access', 'bulk_query_indicator',
+            'sequential_id_access', 'known_browser', 'user_agent_changes',
+            'missing_headers', 'has_referer', 'javascript_enabled', 'night_activity',
+            'weekend_activity', 'off_hours_ratio', 'sql_injection_patterns',
+            'xss_patterns', 'path_traversal_patterns', 'authentication_failures',
+            'canary_access_count'
         ]
     
     def _load_models(self, models_dir):
-        """Load all ensemble models"""
+        """Load all ensemble models with HTTP-appropriate features"""
         models = {}
         
         # Check if models exist
@@ -70,12 +77,23 @@ class AgenticThreatDetector:
             print("  Using fallback detection (train models for full functionality)")
             return models
         
+        # Load scaler first
+        scaler_path = os.path.join(models_dir, 'scaler.pkl')
+        if os.path.exists(scaler_path):
+            try:
+                with open(scaler_path, 'rb') as f:
+                    self.scaler = pickle.load(f)
+                print("✓ Loaded feature scaler")
+            except Exception as e:
+                print(f"⚠ Failed to load scaler: {e}")
+        
+        # Load ML models
         model_files = [
             'isolation_forest.pkl',
             'xgboost.pkl',
             'random_forest.pkl',
             'voting_ensemble.pkl',
-            'stacking_ensemble.pkl'
+            'logistic_regression.pkl'
         ]
         
         for filename in model_files:
@@ -87,11 +105,18 @@ class AgenticThreatDetector:
                 print(f"✓ Loaded {name}")
             except FileNotFoundError:
                 print(f"⚠ Model {name} not found")
+            except Exception as e:
+                print(f"⚠ Error loading {name}: {e}")
+        
+        if len(models) > 0:
+            print(f"✅ ML Models Enabled: {len(models)} models loaded")
+        else:
+            print("⚠️  No ML models loaded - using fallback mode")
         
         return models
     
     def extract_features(self, request_data, session_id):
-        """Extract features from request"""
+        """Extract HTTP application-level features from request"""
         session = self.session_memory[session_id]
         session['requests'].append(request_data)
         
@@ -101,42 +126,143 @@ class AgenticThreatDetector:
         if len(requests) < 2:
             return None
         
-        # Time-based features
-        # BUG FIX: Use sliding window duration instead of session age
-        # This prevents "dormant sessions" from diluting the request rate
+        # Time-based calculations
         try:
             last_req_time = datetime.fromisoformat(requests[-1]['timestamp'])
             first_req_time = datetime.fromisoformat(requests[0]['timestamp'])
             duration = (last_req_time - first_req_time).total_seconds()
-            if duration < 0.001: duration = 0.001 # Prevent division by zero
+            
+            # ✅ BUG FIX: "Cold Start" False Positives
+            # Problem: Training data "Normal" has rate 0.5-3.0 and avg_time 3.0-10.0
+            # Solution: For short sessions, verify we force these values into "Normal" range.
+            
+            # If session has few requests (< 5), force a "Normal" pace
+            if len(requests) < 5:
+                # Force Rate to ~1.0 req/sec (Safe Normal)
+                # We do this by setting duration = request_count
+                min_duration = float(len(requests))
+            else:
+                min_duration = 0.5  # Standard floor for longer sessions
+                
+            if duration < min_duration:
+                duration = min_duration
         except (ValueError, KeyError):
-            # Fallback if timestamp missing or invalid
-            duration = (datetime.now() - session['first_seen']).total_seconds() + 0.001
+            duration = (datetime.now() - session['first_seen']).total_seconds()
+            if duration < 0.5:
+                duration = 0.5
 
-        # Calculate features
+        # Helper functions (Local scope for cleaner code)
+        def get_unique_endpoints():
+            return len(set(r.get('endpoint', '') for r in requests))
+        
+        def get_endpoint_diversity():
+            unique = get_unique_endpoints()
+            return unique / len(requests) if len(requests) > 0 else 0
+        
+        def get_repeat_ratio():
+            if len(requests) == 0: return 0
+            endpoint_counts = {}
+            for r in requests:
+                ep = r.get('endpoint', '')
+                endpoint_counts[ep] = endpoint_counts.get(ep, 0) + 1
+            max_count = max(endpoint_counts.values()) if endpoint_counts else 0
+            return max_count / len(requests)
+        
+        def get_failed_ratio():
+            failed = len([r for r in requests if r.get('status_code', 200) >= 400])
+            return failed / len(requests) if len(requests) > 0 else 0
+        
+        def get_post_get_ratio():
+            post_count = len([r for r in requests if r.get('method', 'GET') == 'POST'])
+            get_count = len([r for r in requests if r.get('method', 'GET') == 'GET'])
+            return post_count / get_count if get_count > 0 else 0
+        
+        def get_time_variance():
+            if len(requests) < 2: return 0
+            times = []
+            for i in range(1, len(requests)):
+                try:
+                    t1 = datetime.fromisoformat(requests[i-1]['timestamp'])
+                    t2 = datetime.fromisoformat(requests[i]['timestamp'])
+                    times.append((t2 - t1).total_seconds())
+                except: pass
+            return np.std(times) if len(times) > 0 else 0
+
+        def get_avg_interval():
+            if len(requests) < 2: return 0
+            try:
+                t1 = datetime.fromisoformat(requests[0]['timestamp'])
+                t2 = datetime.fromisoformat(requests[-1]['timestamp'])
+                return (t2 - t1).total_seconds() / (len(requests) - 1)
+            except: return 0
+        
+        def is_sensitive_endpoint():
+            endpoint = request_data.get('endpoint', '')
+            return 1 if '/admin/' in endpoint or '/export' in endpoint else 0
+        
+        def is_known_browser():
+            ua = request_data.get('user_agent', '')
+            if not ua: return 0
+            known = ['Chrome', 'Firefox', 'Safari', 'Edge', 'Opera']
+            return 1 if any(browser in ua for browser in known) else 0
+        
+        def is_night():
+            h = datetime.now().hour
+            return 1 if h < 6 or h > 22 else 0
+        
+        def is_weekend():
+            return 1 if datetime.now().weekday() >= 5 else 0
+
+        # Session behavior
+        # ✅ BURST SMOOTHING: Fix for "Cold Start" false positives
+        # Legitimate browsers send parallel requests (0.05s apart) on page load.
+        # We floor this value to 3.0s (Normal average) for new sessions.
+        avg_time = get_avg_interval()
+        if len(requests) < 5 and avg_time < 3.0:
+            avg_time = 3.0
+            
+        # Calculate all HTTP features
         features = {
+            # Request patterns
             'request_rate': len(requests) / duration,
-            'response_rate': len([r for r in requests if r.get('status_code', 200) == 200]) / duration,
-            'data_sent_mb': sum(r.get('request_size', 0) for r in requests) / (1024*1024),
-            'data_received_mb': sum(r.get('response_size', 0) for r in requests) / (1024*1024),
-            'total_data_mb': sum(r.get('response_size', 0) + r.get('request_size', 0) for r in requests) / (1024*1024),
-            'duration_seconds': duration,
-            'upload_load_mbps': (sum(r.get('request_size', 0) for r in requests) / duration) / (1024*1024),
-            'download_load_mbps': (sum(r.get('response_size', 0) for r in requests) / duration) / (1024*1024),
-            'packet_ratio': 1.0,
-            'mean_packet_size_sent': np.mean([r.get('request_size', 0) for r in requests]),
-            'mean_packet_size_received': np.mean([r.get('response_size', 0) for r in requests]),
-            'is_http': 1 if request_data.get('endpoint', '').startswith('/api') else 0,
-            'is_https': 1,
-            'http_method_count': len(set(r.get('method', 'GET') for r in requests)),
-            'is_established': 1,
-            'state_ttl_count': len(requests),
-            'inter_packet_time_sent': np.mean(np.diff([0] + [i for i in range(len(requests))])) if len(requests) > 1 else 0,
-            'inter_packet_time_received': np.mean(np.diff([0] + [i for i in range(len(requests))])) if len(requests) > 1 else 0
+            'unique_endpoints': get_unique_endpoints(),
+            'endpoint_diversity': get_endpoint_diversity(),
+            'repeat_ratio': get_repeat_ratio(),  # Matches training data col name
+            'failed_ratio': get_failed_ratio(),
+            'post_get_ratio': get_post_get_ratio(),
+            'repeat_request_ratio': get_repeat_ratio(), # Duplicate for safety if col name varies
+            'failed_request_ratio': get_failed_ratio(), # Duplicate for safety
+            
+            # Session behavior
+            'session_duration_min': duration / 60,
+            'total_requests': len(requests),
+            'avg_time_between': avg_time,
+            'avg_time_between_requests': avg_time, # Duplicate for safety
+            'time_variance': get_time_variance(),
+            'request_time_variance': get_time_variance(), # Duplicate
+            'requests_per_minute': len(requests) / (duration / 60) if duration > 0 else 0,
+            'total_data_transferred_mb': sum(r.get('response_size', 0) for r in requests) / (1024*1024),
+            'avg_response_size_kb': np.mean([r.get('response_size', 0) for r in requests]) / 1024,
+            'sensitive_endpoint_access': is_sensitive_endpoint(),
+            'bulk_query_indicator': 0,
+            'sequential_id_access': 0,
+            'known_browser': is_known_browser(),
+            'user_agent_changes': len(set(r.get('user_agent', '') for r in requests)),
+            'missing_headers': 0,
+            'has_referer': 1 if request_data.get('referer') else 0,
+            'javascript_enabled': 1,
+            'night_activity': is_night(),
+            'weekend_activity': is_weekend(),
+            'off_hours_ratio': 0,
+            'sql_injection_patterns': 0,
+            'xss_patterns': 0,
+            'path_traversal_patterns': 0,
+            'authentication_failures': 0,
+            'canary_access_count': 0
         }
         
-        # Convert to array
-        feature_vector = np.array([features[col] for col in self.feature_cols])
+        # Convert to array using ONLY the columns expected by the model
+        feature_vector = np.array([features.get(col, 0) for col in self.feature_cols])
         
         return feature_vector
     
@@ -146,6 +272,14 @@ class AgenticThreatDetector:
             # Fallback: simple heuristic
             return {'risk_score': 0.1, 'model_votes': {}, 'confidence': 0.5}
         
+        # Normalize features using scaler (same as training)
+        if self.scaler is not None:
+            # Fix UserWarning: Create DataFrame with feature names
+            features_df = pd.DataFrame([features], columns=self.feature_cols)
+            features_scaled = self.scaler.transform(features_df)[0]
+        else:
+            features_scaled = features
+        
         votes = {}
         probabilities = []
         
@@ -153,17 +287,17 @@ class AgenticThreatDetector:
         for name, model in self.models.items():
             try:
                 if name == 'isolation_forest':
-                    pred = model.predict([features])[0]
+                    pred = model.predict([features_scaled])[0]
                     votes[name] = 1 if pred == -1 else 0
                     probabilities.append(1.0 if pred == -1 else 0.0)
                 
                 if hasattr(model, 'predict_proba'):
-                    proba = model.predict_proba([features])[0]
+                    proba = model.predict_proba([features_scaled])[0]
                     votes[name] = int(np.argmax(proba))
                     probabilities.append(float(proba[1]) if len(proba) > 1 else float(proba[0]))
                 
                 else:
-                    pred = model.predict([features])[0]
+                    pred = model.predict([features_scaled])[0]
                     # Map -1 to 1 (attack) for Isolation Forest
                     if name == 'isolation_forest':
                         votes[name] = 1 if pred == -1 else 0
@@ -227,14 +361,28 @@ class AgenticThreatDetector:
                 session['accumulated_penalty'] += 0.1 # Add 10% permanent penalty
                 risk_score = min(1.0, risk_score + session['accumulated_penalty'])
         
+        # 🛡️ GRACE PERIOD: Don't block during initial requests (page loads)
+        # Only monitor for first 5 requests to avoid false positives
+        session_request_count = len(session['requests'])
+        
         # Decision logic
         if risk_score >= adjusted_thresholds['critical']:
-            action = 'block'
-            reasoning = f"Critical threat detected (score: {risk_score:.2f})"
+            # Don't block if still in grace period
+            if session_request_count < 5:
+                action = 'monitor'
+                reasoning = f"Critical risk detected BUT grace period active (only {session_request_count} requests)"
+            else:
+                action = 'block'
+                reasoning = f"Critical threat detected (score: {risk_score:.2f})"
         
         elif risk_score >= adjusted_thresholds['high']:
-            action = 'shadow_ban'
-            reasoning = f"High risk - deploying shadow ban (score: {risk_score:.2f})"
+            # Don't shadow_ban if still in grace period
+            if session_request_count < 5:
+                action = 'monitor'
+                reasoning = f"High risk detected BUT grace period active (only {session_request_count} requests)"
+            else:
+                action = 'shadow_ban'
+                reasoning = f"High risk - deploying shadow ban (score: {risk_score:.2f})"
         
         elif risk_score >= adjusted_thresholds['medium']:
             action = 'throttle'
