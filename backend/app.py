@@ -32,8 +32,8 @@ CORS(app, resources={
     }
 })
 
-# WebSocket (using threading mode for Python 3.13 compatibility)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+# WebSocket (auto-detects async mode, e.g., eventlet on Render)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Database connection
 from config.db import get_database
