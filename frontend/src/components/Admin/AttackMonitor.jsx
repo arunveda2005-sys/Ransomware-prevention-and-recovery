@@ -75,7 +75,9 @@ function AttackMonitor() {
 
                 // Blockchain
                 const bcResponse = await adminAPI.getBlockchain();
-                setBlockchainCount(bcResponse.data.blockchain.length);
+                if (bcResponse.data && bcResponse.data.blockchain) {
+                    setBlockchainCount(bcResponse.data.blockchain.length);
+                }
 
             } catch (e) { console.error("Data Load Error:", e); }
         };
@@ -465,8 +467,8 @@ function AttackMonitor() {
                                             <Box sx={{ maxHeight: 100, overflow: 'auto', bgcolor: 'rgba(0,0,0,0.3)', p: 1, borderRadius: 1, mt: 1 }}>
                                                 <code style={{ fontSize: '0.8rem' }}>
                                                     {canaryAlert?.type === 'HONEYTOKEN'
-                                                        ? `Token used by: ${canaryAlert?.usage_context?.attacker_ip}`
-                                                        : canaryAlert?.canaries_accessed?.map(c => c.email || c.canary_id).join(', ') || 'Processing context...'
+                                                        ? `Token used by: ${canaryAlert?.usage_context?.attacker_ip || 'Unknown'}`
+                                                        : (canaryAlert?.canaries_accessed || []).map(c => c.email || c.canary_id).join(', ') || 'Processing context...'
                                                     }
                                                 </code>
                                             </Box>
