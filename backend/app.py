@@ -232,6 +232,19 @@ def analyze_request(response):
     
     return response
 
+# ==================== PUBLIC ROUTES ====================
+
+@app.route('/', methods=['GET'])
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Simple health check endpoint for Render deployment."""
+    return jsonify({
+        'status': 'online',
+        'service': 'E-Commerce Security Platform API',
+        'time': datetime.now().isoformat()
+    })
+
+
 # ==================== AUTH DECORATORS ====================
 
 def token_required(f):
