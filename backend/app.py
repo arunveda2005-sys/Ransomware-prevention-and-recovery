@@ -80,10 +80,8 @@ def log_request():
     # ✅ WHITELIST: Always allow these endpoints even if blocked
     # This is CRITICAL for demo: attackers must reach System B endpoints!
     whitelist = [
-        '/api/auth/login',              # Allow login
-        '/api/auth/register',           # Allow registration
-        '/api/admin/ip/unban',          # Allow admin to unban
-        '/api/admin/users/export',      # ⭐ MUST allow for System B demo
+        '/api/admin/ip/unban',          # Allow admin to unban (Admin panel needs this)
+        '/api/admin/users/export',      # ⭐ MUST allow for System B demo (Data exfiltration)
         '/api/auth/verify-api-key',     # ⭐ Honeytoken callback
         '/api/auth/reset-password',     # ⭐ Honeytoken callback
         '/api/auth/verify-session'      # ⭐ Honeytoken callback
