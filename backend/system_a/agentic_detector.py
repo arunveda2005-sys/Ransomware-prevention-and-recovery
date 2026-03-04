@@ -450,6 +450,7 @@ class AgenticThreatDetector:
                     sessions_to_remove.append(sess_id)
             
             for sess_id in sessions_to_remove:
+                # Fully delete the session so it starts fresh without 'block' history
                 del self.session_memory[sess_id]
             
             print(f"✓ Reset {len(sessions_to_remove)} sessions for IP {ip}")
