@@ -19,7 +19,7 @@ import {
     Search as SearchIcon,
     History as HistoryIcon
 } from '@mui/icons-material';
-import { subscribeToThreats, subscribeToCanaries } from '../../services/websocket';
+import { subscribeToThreats, subscribeToCanaries, subscribeToHoneytokens } from '../../services/websocket';
 import { adminAPI } from '../../services/api';
 
 // --- THEME CONSTANTS ---
@@ -105,12 +105,29 @@ function AttackMonitor() {
 
         // WS: Canaries
         const unsubscribeCanaries = subscribeToCanaries((alert) => {
-            setCanaryAlert(alert);
+            setCanaryAlert(prev => ({
+                ...alert,
+                type: 'CANARY'
+            }));
             setSystemMode('BREACH_CONFIRMED');
             setBlockchainCount(c => c + 1);
         });
 
-        return () => { unsubscribeThreats(); unsubscribeCanaries(); };
+        // WS: Honeytokens (System B Secondary Alert)
+        const unsubscribeHoneytokens = subscribeToHoneytokens((alert) => {
+            setCanaryAlert(prev => ({
+                ...alert,
+                type: 'HONEYTOKEN'
+            }));
+            setSystemMode('BREACH_CONFIRMED');
+            setBlockchainCount(c => c + 1);
+        });
+
+        return () => {
+            unsubscribeThreats();
+            unsubscribeCanaries();
+            unsubscribeHoneytokens();
+        };
     }, []);
 
     const handleUnbanIP = async (ip) => {
@@ -441,10 +458,15 @@ function AttackMonitor() {
 
                                     {systemMode === 'BREACH_CONFIRMED' ? (
                                         <Alert severity="error" variant="filled" sx={{ bgcolor: 'rgba(255, 23, 68, 0.1)', border: '1px solid #ff1744', color: '#ff1744' }}>
-                                            <Typography variant="subtitle2" fontWeight="bold">🚨 DATA EXFILTRATION</Typography>
+                                            <Typography variant="subtitle2" fontWeight="bold">
+                                                {canaryAlert?.type === 'HONEYTOKEN' ? '🍯 HONEYTOKEN TAMPERED' : '🚨 DATA EXFILTRATION'}
+                                            </Typography>
                                             <Box sx={{ maxHeight: 100, overflow: 'auto', bgcolor: 'rgba(0,0,0,0.3)', p: 1, borderRadius: 1, mt: 1 }}>
                                                 <code style={{ fontSize: '0.8rem' }}>
-                                                    {canaryAlert?.canaries_accessed?.map(c => c.email || c.canary_id).join(', ') || 'Wait...'}
+                                                    {canaryAlert?.type === 'HONEYTOKEN'
+                                                        ? `Token used by: ${canaryAlert?.usage_context?.attacker_ip}`
+                                                        : canaryAlert?.canaries_accessed?.map(c => c.email || c.canary_id).join(', ') || 'Processing context...'
+                                                    }
                                                 </code>
                                             </Box>
                                         </Alert>

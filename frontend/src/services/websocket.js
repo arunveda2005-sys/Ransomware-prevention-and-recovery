@@ -5,6 +5,7 @@ const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 let socket = null;
 let threatListeners = [];
 let canaryListeners = [];
+let honeytokenListeners = [];
 
 export const initWebSocket = (token) => {
     if (socket) {
@@ -36,6 +37,11 @@ export const initWebSocket = (token) => {
         canaryListeners.forEach(listener => listener(data));
     });
 
+    socket.on('honeytoken_triggered', (data) => {
+        console.log('🚨 Honeytoken triggered:', data);
+        honeytokenListeners.forEach(listener => listener(data));
+    });
+
     return socket;
 };
 
@@ -56,6 +62,14 @@ export const subscribeToCanaries = (callback) => {
     };
 };
 
+export const subscribeToHoneytokens = (callback) => {
+    honeytokenListeners.push(callback);
+
+    return () => {
+        honeytokenListeners = honeytokenListeners.filter(l => l !== callback);
+    };
+};
+
 export const disconnectWebSocket = () => {
     if (socket) {
         socket.disconnect();
@@ -64,4 +78,5 @@ export const disconnectWebSocket = () => {
 
     threatListeners = [];
     canaryListeners = [];
+    honeytokenListeners = [];
 };

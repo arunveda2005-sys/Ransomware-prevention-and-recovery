@@ -623,15 +623,22 @@ def clear_threats():
         # 1. Clear DB logs
         result = db.request_logs.delete_many({})
         
-        # 2. Clear Manual Bans
+        # 2. Clear Honeytokens and Reset Canaries
+        db.honeytokens.delete_many({})
+        db.users.delete_many({'is_canary': True}) # Clear deployed canaries so they can be re-deployed
+        
+        # 3. Clear Manual Bans
         BANNED_IPS.clear()
         
-        # 3. Clear AI Memory
+        # 4. Clear AI Memory
         threat_detector.session_memory.clear()
         threat_detector.decision_history.clear()
         
+        # 5. Clear Blockchain (Optional - for demo/reset purposes)
+        blockchain_logger.chain = [blockchain_logger.create_genesis_block()]
+        
         return jsonify({
-            'message': f'System Reset: Deleted {result.deleted_count} logs, cleared bans and AI memory.',
+            'message': f'System Reset: Logs, Bans, Honeytokens, and AI Memory cleared successfully.',
             'count': result.deleted_count
         })
     except Exception as e:

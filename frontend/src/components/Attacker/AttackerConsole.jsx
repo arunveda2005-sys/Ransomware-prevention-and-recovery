@@ -66,6 +66,8 @@ const AttackerConsole = () => {
         }
     };
 
+    const [stolenData, setStolenData] = useState([]);
+
     const runAttack = async (type, config) => {
         setActiveAttack(type);
         setProgress(0);
@@ -103,7 +105,9 @@ const AttackerConsole = () => {
                 // Special case for exfiltration
                 if (type === 'exfiltration' && response.data) {
                     const users = response.data.users || [];
+                    setStolenData(users);
                     addLog(`🔓 EXFILTRATED DATA: ${users.length} user records stolen!`, 'error');
+                    addLog(`💡 TIP: Notice the 'api_key' fields in the stolen data - these are trackable honeytokens!`, 'info');
                     if (response.data.canary_alert && response.data.canary_alert.breach_detected) {
                         addLog(`🚨 SYSTEM B TRIGGERED: ${response.data.canary_alert.message}`, 'warning');
                     }
@@ -138,7 +142,7 @@ const AttackerConsole = () => {
             color: '#4caf50',
             action: () => runAttack('normal', {
                 name: 'Normal Browsing',
-                endpoint: '/products', // api.js baseURL already has /api
+                endpoint: '/products',
                 count: 10,
                 delay: 1000,
                 options: { method: 'GET' }
@@ -152,9 +156,9 @@ const AttackerConsole = () => {
             color: '#ff9800',
             action: () => runAttack('rapid', {
                 name: 'Rapid Scraping',
-                endpoint: '/products', // api.js baseURL already has /api
+                endpoint: '/products',
                 count: 50,
-                delay: 100, // Fast
+                delay: 100,
                 options: { method: 'GET' }
             })
         },
@@ -166,9 +170,9 @@ const AttackerConsole = () => {
             color: '#9c27b0',
             action: () => runAttack('stealth', {
                 name: 'Stealth Scrape',
-                endpoint: '/products', // api.js baseURL already has /api
+                endpoint: '/products',
                 count: 20,
-                delay: 2000, // Slow
+                delay: 2000,
                 options: { method: 'GET' }
             })
         },
@@ -178,9 +182,9 @@ const AttackerConsole = () => {
             description: 'Trigger System B by accessing protected data',
             icon: <ExfilIcon />,
             color: '#e91e63',
-            action: () => runAttack('exfil', {
+            action: () => runAttack('exfiltration', {
                 name: 'Data Exfiltration',
-                endpoint: '/admin/users/export',  // Remove /api prefix (baseURL has it)
+                endpoint: '/admin/users/export',
                 count: 1,
                 delay: 0,
                 options: {
@@ -261,7 +265,7 @@ const AttackerConsole = () => {
                                     fullWidth
                                     variant="contained"
                                     onClick={attack.action}
-                                    disabled={activeAttack !== null || (ipStatus === 'Blocked' && attack.id !== 'normal')} // Blocked IP can't attack effectively
+                                    disabled={activeAttack !== null || (ipStatus === 'Blocked' && attack.id !== 'normal')}
                                     sx={{
                                         bgcolor: attack.color,
                                         fontWeight: 'bold',
@@ -275,6 +279,33 @@ const AttackerConsole = () => {
                     </Grid>
                 ))}
             </Grid>
+
+            {/* STOLEN DATA PREVIEW SECTION */}
+            {stolenData.length > 0 && (
+                <Paper sx={{ p: 3, mt: 3, bgcolor: '#0a0a0a', color: '#fff', border: '1px solid #f44336' }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                        <DownloadIcon sx={{ color: '#f44336', mr: 1 }} />
+                        <Typography variant="h6" sx={{ fontFamily: 'monospace' }}>STOLEN_DATA_DUMP.JSON</Typography>
+                    </Box>
+                    <Divider sx={{ mb: 2, borderColor: '#333' }} />
+                    <Box sx={{
+                        maxHeight: 400,
+                        overflow: 'auto',
+                        bgcolor: '#000',
+                        p: 2,
+                        borderRadius: 1,
+                        border: '1px solid #222'
+                    }}>
+                        <pre style={{ margin: 0, color: '#0f0', fontSize: '0.85rem' }}>
+                            {JSON.stringify(stolenData.slice(0, 10), null, 2)}
+                            {stolenData.length > 10 && `\n... ${stolenData.length - 10} more records truncated ...`}
+                        </pre>
+                    </Box>
+                    <Typography variant="caption" sx={{ mt: 2, display: 'block', color: '#f44336' }}>
+                        ⚠️ Forensic markers detected in downloaded payload.
+                    </Typography>
+                </Paper>
+            )}
 
             <Paper sx={{ p: 3, mt: 3, bgcolor: '#000', color: '#0f0', border: '1px solid #333' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
