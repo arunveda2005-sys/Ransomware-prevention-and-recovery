@@ -77,35 +77,32 @@ def log_request():
     client_ip = request.headers.get('X-Mock-IP', request.remote_addr)
     # print(f"DEBUG: Endpoint: {request.path} | Resolved IP: {client_ip}") # Uncomment for deeper debugging
 
-    # Check IP Ban (Manual Blocks)
-    if client_ip in BANNED_IPS:
-        # ALLOW LOGIN and UNBAN endpoints for demo recovery
-        if request.path not in ['/api/auth/login', '/api/admin/ip/unban']:
-             return make_response(jsonify({'error': 'Access Denied - IP Banned'}), 403)
+    # ✅ WHITELIST: Always allow these endpoints even if blocked
+    # This is CRITICAL for demo: attackers must reach System B endpoints!
+    whitelist = [
+        '/api/auth/login',              # Allow login
+        '/api/auth/register',           # Allow registration
+        '/api/admin/ip/unban',          # Allow admin to unban
+        '/api/admin/users/export',      # ⭐ MUST allow for System B demo
+        '/api/auth/verify-api-key',     # ⭐ Honeytoken callback
+        '/api/auth/reset-password',     # ⭐ Honeytoken callback
+        '/api/auth/verify-session'      # ⭐ Honeytoken callback
+    ]
+
+    # Check IP Ban (Manual & AI Blocks)
+    is_banned = client_ip in BANNED_IPS
     
     # Check Session Risk (Smart Blocking)
     session_id = request.headers.get('Session-ID', 'unknown')
-    if session_id != 'unknown':
+    if not is_banned and session_id != 'unknown':
         status = threat_detector.get_session_status(session_id)
         if status == 'block':
-            # ✅ WHITELIST: Always allow these endpoints even if blocked
-            # This is CRITICAL for demo: attackers must reach System B endpoints!
-            whitelist = [
-                '/api/auth/login',              # Allow login
-                '/api/auth/register',           # Allow registration
-                '/api/admin/ip/unban',          # Allow admin to unban
-                '/api/admin/users/export',      # ⭐ MUST allow for System B demo
-                '/api/auth/verify-api-key',     # ⭐ Honeytoken callback
-                '/api/auth/reset-password',     # ⭐ Honeytoken callback
-                '/api/auth/verify-session'      # ⭐ Honeytoken callback
-            ]
+            is_banned = True
             
-            # Check if current path is whitelisted
-            if request.path not in whitelist:
-                # Block non-whitelisted endpoints
-                print(f"⛔ System A block for session {session_id} on {request.path}")
-                return make_response(jsonify({'error': 'Access Denied - High Risk Detected'}), 403)
-
+    if is_banned:
+        if request.path not in whitelist:
+            print(f"⛔ Blocked request from {client_ip} / session {session_id} on {request.path}")
+            return make_response(jsonify({'error': 'Access Denied - Security Risk Detected'}), 403)
     
     # Skip for static files
     if request.path.startswith('/static'):
@@ -220,7 +217,8 @@ def analyze_request(response):
     
     # Apply response based on action
     if threat_analysis['action'] == 'block':
-        # BANNED_IPS.add(request_data['ip']) # <-- REMOVED: Only manual blocks add to global list
+        if request_data.get('ip'):
+            BANNED_IPS.add(request_data['ip']) # Added to global list for Admin Dashboard
         return jsonify({'error': 'Request blocked due to security concerns'}), 403
     
     elif threat_analysis['action'] == 'shadow_ban':
