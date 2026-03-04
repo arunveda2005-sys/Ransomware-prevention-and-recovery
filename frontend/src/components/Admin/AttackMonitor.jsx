@@ -17,7 +17,8 @@ import {
     Speed as SpeedIcon,
     Recommend as AiIcon,
     Search as SearchIcon,
-    History as HistoryIcon
+    History as HistoryIcon,
+    BugReport as BugIcon
 } from '@mui/icons-material';
 import { subscribeToThreats, subscribeToCanaries, subscribeToHoneytokens } from '../../services/websocket';
 import { adminAPI } from '../../services/api';
@@ -156,7 +157,7 @@ function AttackMonitor() {
         return (
             <TableRow sx={{ '&:last-child td, &:last-child th': { border: 0 } }}>
                 <TableCell sx={{ color: THEME.textDim, borderBottom: '1px solid #1e3a5a' }}>
-                    {new Date(t.timestamp).toLocaleTimeString()}
+                    {t.timestamp ? new Date(t.timestamp).toLocaleTimeString() : 'Recent'}
                 </TableCell>
                 <TableCell sx={{ color: THEME.text, borderBottom: '1px solid #1e3a5a', fontFamily: 'monospace' }}>
                     {t.ip || 'Unknown'}
