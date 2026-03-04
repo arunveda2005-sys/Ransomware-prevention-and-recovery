@@ -479,6 +479,49 @@ function AttackMonitor() {
                                 </Box>
                             </Paper>
 
+                            {/* BREACH COUNTERMEASURES (The "Poisoning" Evidence) */}
+                            <Paper sx={{ p: 0, bgcolor: THEME.panelBg, border: THEME.border, flex: 1.5 }}>
+                                <Box sx={{ p: 2, borderBottom: THEME.border, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                                        <BugIcon sx={{ color: THEME.error, mr: 1 }} />
+                                        <Typography variant="h6" sx={{ color: THEME.text }}>Breach Countermeasures</Typography>
+                                    </Box>
+                                    <Chip
+                                        label="AUTO-POISONING: ACTIVE"
+                                        size="small"
+                                        sx={{ bgcolor: 'rgba(0, 229, 255, 0.1)', color: THEME.primary, border: `1px solid ${THEME.primary}` }}
+                                    />
+                                </Box>
+                                <Box sx={{ p: 2 }}>
+                                    <Typography variant="caption" sx={{ color: THEME.textDim, mb: 2, display: 'block' }}>
+                                        Trackable Forensic Markers Injected:
+                                    </Typography>
+
+                                    {systemMode === 'BREACH_CONFIRMED' ? (
+                                        <Box sx={{ p: 1, bgcolor: '#000', borderRadius: 1, border: '1px solid #333' }}>
+                                            <Stack spacing={1}>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                    <Typography variant="caption" sx={{ color: THEME.success }}>✓ Admin API Keys (FAKE)</Typography>
+                                                    <Typography variant="caption" sx={{ color: THEME.textDim }}>status: poisoning</Typography>
+                                                </Box>
+                                                <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                    <Typography variant="caption" sx={{ color: THEME.success }}>✓ Session Tokens (TRACKED)</Typography>
+                                                    <Typography variant="caption" sx={{ color: THEME.textDim }}>status: poisoning</Typography>
+                                                </Box>
+                                                <Divider sx={{ my: 1, borderColor: '#222' }} />
+                                                <Typography variant="caption" sx={{ color: THEME.primary, fontStyle: 'italic' }}>
+                                                    Identity of attacker is now linked to these tokens. Session tracking active across devices.
+                                                </Typography>
+                                            </Stack>
+                                        </Box>
+                                    ) : (
+                                        <Box sx={{ p: 4, textAlign: 'center', opacity: 0.3 }}>
+                                            <Typography variant="caption">Countermeasures Armed - Waiting for Breach Event</Typography>
+                                        </Box>
+                                    )}
+                                </Box>
+                            </Paper>
+
                             {/* FORENSIC ANALYSIS */}
                             <Paper sx={{ p: 0, bgcolor: THEME.panelBg, border: THEME.border, flex: 1 }}>
                                 <Box sx={{ p: 2, borderBottom: THEME.border, display: 'flex', alignItems: 'center' }}>
@@ -486,11 +529,9 @@ function AttackMonitor() {
                                     <Typography variant="h6" sx={{ color: THEME.text }}>Forensic Ledger</Typography>
                                 </Box>
                                 <Box sx={{ p: 3 }}>
-                                    <Typography variant="caption" sx={{ color: THEME.textDim, mb: 1, display: 'block' }}>IMMUTABLE BLOCKS:</Typography>
-                                    <Typography variant="h4" sx={{ color: THEME.primary, mb: 2 }}>{blockchainCount}</Typography>
-                                    <Box sx={{ p: 1.5, bgcolor: '#000', borderRadius: 1, fontFamily: 'monospace', color: THEME.success, fontSize: '0.7rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                        0x7f83b165...a92b
-                                    </Box>
+                                    <Typography variant="caption" sx={{ color: THEME.textDim, mb: 1, display: 'block' }}>IMMUTABLE PROOF BLOCKS:</Typography>
+                                    <Typography variant="h4" sx={{ color: THEME.primary, mb: 1 }}>{blockchainCount}</Typography>
+                                    <Typography variant="caption" sx={{ color: THEME.textDim }}>Evidence cannot be tampered with by attacker.</Typography>
                                 </Box>
                             </Paper>
                         </Stack>
