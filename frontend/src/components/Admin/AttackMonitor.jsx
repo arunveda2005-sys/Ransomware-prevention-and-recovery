@@ -20,8 +20,8 @@ import {
     History as HistoryIcon,
     BugReport as BugIcon
 } from '@mui/icons-material';
-import { subscribeToThreats, subscribeToCanaries, subscribeToHoneytokens } from '../../services/websocket';
-import { adminAPI } from '../../services/api';
+import { subscribeToThreats, subscribeToCanaries, subscribeToHoneytokens, subscribeToSecurityState, subscribeToBlockedIps } from '../../services/websocket';
+import { adminAPI, securityAPI } from '../../services/api';
 
 // --- THEME CONSTANTS ---
 const THEME = {
@@ -44,6 +44,7 @@ function AttackMonitor() {
     const [statistics, setStatistics] = useState({ total: 0, blocks: 0, shadowBanned: 0, monitored: 0 });
     const [canaryAlert, setCanaryAlert] = useState(null);
     const [systemMode, setSystemMode] = useState('NORMAL');
+    const [securityMessage, setSecurityMessage] = useState('Traffic normal');
     const [blockedIps, setBlockedIps] = useState([]);
     const [blockchainCount, setBlockchainCount] = useState(0);
 
@@ -67,11 +68,19 @@ function AttackMonitor() {
 
                 // Blocked IPs
                 const ipResponse = await adminAPI.getBannedIPs();
-                const blockedList = ipResponse.data.banned_ips.map(ip => ({
-                    ip, timestamp: new Date().toISOString(), score: (Math.random() * 10 + 10).toFixed(2), status: 'banned'
+                const blockedList = (ipResponse.data.records || []).map(record => ({
+                    ip: record.ip,
+                    timestamp: record.blocked_at || new Date().toISOString(),
+                    score: record.risk_score ? (record.risk_score * 100).toFixed(0) : '100',
+                    status: record.source || 'banned',
+                    reason: record.reason
                 }));
                 setBlockedIps(blockedList);
                 if (blockedList.length > 0) setSystemMode('UNDER_ATTACK');
+
+                const securityResponse = await securityAPI.getStatus();
+                setSystemMode(securityResponse.data?.mode || 'NORMAL');
+                setSecurityMessage(securityResponse.data?.message || 'Traffic normal');
 
                 // Blockchain
                 const bcResponse = await adminAPI.getBlockchain();
@@ -96,10 +105,11 @@ function AttackMonitor() {
 
             if (threat.action === 'block') {
                 setSystemMode('UNDER_ATTACK');
+                setSecurityMessage(`Attack contained from ${threat.ip || 'unknown IP'}`);
                 setBlockedIps(prev => {
                     const ip = threat.ip || 'Unknown';
                     if (!prev.find(p => p.ip === ip)) {
-                        return [{ ip, timestamp: threat.timestamp, score: (threat.risk_score * 20).toFixed(2), status: 'banned' }, ...prev];
+                        return [{ ip, timestamp: threat.timestamp, score: (threat.risk_score * 100).toFixed(0), status: 'system_a', reason: threat.reasoning }, ...prev];
                     }
                     return prev;
                 });
@@ -113,6 +123,7 @@ function AttackMonitor() {
                 type: 'CANARY'
             }));
             setSystemMode('BREACH_CONFIRMED');
+            setSecurityMessage('Safe mode active after canary-confirmed exfiltration');
             setBlockchainCount(c => c + 1);
         });
 
@@ -123,20 +134,47 @@ function AttackMonitor() {
                 type: 'HONEYTOKEN'
             }));
             setSystemMode('BREACH_CONFIRMED');
+            setSecurityMessage('Safe mode active after honeytoken trigger');
             setBlockchainCount(c => c + 1);
+        });
+
+        const unsubscribeSecurityState = subscribeToSecurityState((state) => {
+            setSystemMode(state.mode || 'NORMAL');
+            setSecurityMessage(state.message || 'Traffic normal');
+        });
+
+        const unsubscribeBlockedIps = subscribeToBlockedIps((event) => {
+            setBlockedIps(prev => {
+                if (prev.some(item => item.ip === event.ip)) {
+                    return prev;
+                }
+
+                return [{
+                    ip: event.ip,
+                    timestamp: event.timestamp,
+                    score: event.risk_score ? (event.risk_score * 100).toFixed(0) : '100',
+                    status: event.source || 'blocked',
+                    reason: event.reason
+                }, ...prev];
+            });
         });
 
         return () => {
             unsubscribeThreats();
             unsubscribeCanaries();
             unsubscribeHoneytokens();
+            unsubscribeSecurityState();
+            unsubscribeBlockedIps();
         };
     }, []);
 
     const handleUnbanIP = async (ip) => {
         await adminAPI.unbanIP(ip);
         setBlockedIps(p => p.filter(i => i.ip !== ip));
-        if (blockedIps.length <= 1 && systemMode === 'UNDER_ATTACK') setSystemMode('NORMAL');
+        if (blockedIps.length <= 1 && systemMode === 'UNDER_ATTACK') {
+            setSystemMode('NORMAL');
+            setSecurityMessage('Traffic normal');
+        }
     };
 
     const handleClearLogs = async () => {
@@ -194,6 +232,10 @@ function AttackMonitor() {
                     RESET SYSTEM
                 </Button>
             </Box>
+
+            <Alert severity={systemMode === 'BREACH_CONFIRMED' ? 'error' : systemMode === 'UNDER_ATTACK' ? 'warning' : 'success'} sx={{ mb: 3 }}>
+                <strong>{systemMode}</strong> {securityMessage}
+            </Alert>
 
             {/* TABS */}
             <Paper sx={{ mb: 3, bgcolor: THEME.panelBg, border: THEME.border }}>

@@ -18,6 +18,13 @@ import BlockchainViewer from './components/Admin/BlockchainViewer';
 
 // Services
 import { initWebSocket } from './services/websocket';
+import { securityAPI } from './services/api';
+
+const DEFAULT_SECURITY_STATE = {
+    mode: 'NORMAL',
+    safe_mode: false,
+    message: 'Traffic normal'
+};
 
 const theme = createTheme({
     palette: {
@@ -43,6 +50,7 @@ const theme = createTheme({
 function App() {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [securityState, setSecurityState] = useState(DEFAULT_SECURITY_STATE);
 
     useEffect(() => {
         // Check for stored token
@@ -59,6 +67,31 @@ function App() {
         }
 
         setLoading(false);
+    }, []);
+
+    useEffect(() => {
+        let active = true;
+
+        const loadSecurityState = async () => {
+            try {
+                const response = await securityAPI.getStatus();
+                if (active) {
+                    setSecurityState(response.data || DEFAULT_SECURITY_STATE);
+                }
+            } catch (error) {
+                if (active) {
+                    setSecurityState(DEFAULT_SECURITY_STATE);
+                }
+            }
+        };
+
+        loadSecurityState();
+        const intervalId = window.setInterval(loadSecurityState, 5000);
+
+        return () => {
+            active = false;
+            window.clearInterval(intervalId);
+        };
     }, []);
 
     const handleLogin = (userData, token) => {
@@ -86,7 +119,7 @@ function App() {
         <ThemeProvider theme={theme}>
             <CssBaseline />
             <Router>
-                <Navbar user={user} onLogout={handleLogout} />
+                <Navbar user={user} onLogout={handleLogout} securityState={securityState} />
 
                 <Routes>
                     {/* Public routes */}
@@ -99,9 +132,9 @@ function App() {
                     } />
 
                     {/* Shop routes */}
-                    <Route path="/" element={<ProductList />} />
+                    <Route path="/" element={<ProductList securityState={securityState} />} />
                     <Route path="/cart" element={
-                        user ? <Cart /> : <Navigate to="/login" />
+                        user ? <Cart securityState={securityState} /> : <Navigate to="/login" />
                     } />
                     <Route path="/attack-simulator" element={
                         user ? <AttackSimulator /> : <Navigate to="/login" />

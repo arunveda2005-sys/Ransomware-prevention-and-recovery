@@ -1,15 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import {
     Container, Grid, Card, CardContent, CardMedia, Typography,
-    Button, TextField, Box, CircularProgress
+    Button, TextField, Box, CircularProgress, Alert
 } from '@mui/material';
 import { productsAPI, cartAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 
-function ProductList() {
+function ProductList({ securityState }) {
     const [products, setProducts] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const safeMode = securityState?.safe_mode;
 
     useEffect(() => {
         loadProducts();
@@ -57,6 +58,12 @@ function ProductList() {
                 Products
             </Typography>
 
+            {safeMode && (
+                <Alert severity="warning" sx={{ mb: 3 }}>
+                    {securityState?.message || 'Safe mode is active.'} Shopping remains visible, but high-risk actions may be restricted while the attack is contained.
+                </Alert>
+            )}
+
             <Box sx={{ mb: 3, display: 'flex', gap: 2 }}>
                 <TextField
                     fullWidth
@@ -98,9 +105,9 @@ function ProductList() {
                                     variant="contained"
                                     sx={{ mt: 2 }}
                                     onClick={() => handleAddToCart(product._id)}
-                                    disabled={product.stock === 0}
+                                    disabled={product.stock === 0 || safeMode}
                                 >
-                                    Add to Cart
+                                    {safeMode ? 'Temporarily Disabled' : 'Add to Cart'}
                                 </Button>
                             </CardContent>
                         </Card>

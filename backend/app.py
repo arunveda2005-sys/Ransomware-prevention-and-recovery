@@ -1,9 +1,10 @@
 from flask import Flask, request, jsonify, make_response
 from flask_cors import CORS
-from flask_socketio import SocketIO, emit
+from flask_socketio import SocketIO, emit, join_room
 import os
 import sys
 import time
+import secrets
 from dotenv import load_dotenv
 import jwt
 from datetime import datetime, timedelta
@@ -40,6 +41,12 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 from config.db import get_database
 db = get_database()
 
+# Auto-bootstrap permanent data if database is completely empty
+if db.users.count_documents({}) == 0:
+    print("Database is empty. Automatically bootstrapping permanent default data...")
+    from scripts.seed_database import seed_database
+    seed_database()
+
 # Import systems
 from system_a.agentic_detector import AgenticThreatDetector
 from system_a.blockchain_logger import BlockchainLogger
@@ -47,6 +54,8 @@ from system_b.smart_canaries import SmartCanaryGenerator
 from system_b.data_protector import DataProtector
 from system_b.breach_calculator import BreachImpactCalculator
 from system_b.honeytoken_generator import DynamicHoneytokenGenerator
+from system_b.backup_manager import BackupManager
+from system_a.mitre_mapper import MitreMapper
 
 # Initialize systems
 threat_detector = AgenticThreatDetector()
@@ -57,14 +66,100 @@ canary_generator = SmartCanaryGenerator(db)
 data_protector = DataProtector(master_key=os.getenv('ENCRYPTION_KEY'))
 breach_calculator = BreachImpactCalculator(db)
 
-# ✅ NEW: Initialize honeytoken generator
+# Initialize honeytoken generator and backup manager
 honeytoken_generator = DynamicHoneytokenGenerator(db, socketio, blockchain_logger)
+backup_manager = BackupManager(db)
+mitre_mapper = MitreMapper(db)
 
 
 # ==================== MIDDLEWARE ====================
 
-# Global Banned IPs (In-memory for demo purposes)
+# Global Banned IPs and real-time security state
+ADMIN_MONITORING_ROOM = 'admin_monitoring'
 BANNED_IPS = set()
+SECURITY_STATE = {
+    'mode': 'NORMAL',
+    'safe_mode': False,
+    'message': 'Traffic normal',
+    'last_updated': datetime.now().isoformat(),
+    'active_incident': None,
+    'blocked_ip_count': 0
+}
+
+
+def _refresh_blocked_ip_count():
+    SECURITY_STATE['blocked_ip_count'] = len(BANNED_IPS)
+
+
+def emit_security_state():
+    _refresh_blocked_ip_count()
+    socketio.emit('security_state', SECURITY_STATE.copy(), room=ADMIN_MONITORING_ROOM)
+
+
+def set_security_state(mode, message, safe_mode=None, incident=None):
+    SECURITY_STATE['mode'] = mode
+    SECURITY_STATE['message'] = message
+    SECURITY_STATE['safe_mode'] = mode in {'UNDER_ATTACK', 'BREACH_CONFIRMED'} if safe_mode is None else safe_mode
+    SECURITY_STATE['active_incident'] = incident
+    SECURITY_STATE['last_updated'] = datetime.now().isoformat()
+    emit_security_state()
+
+
+def block_ip_address(ip, reason, risk_score=None, source='system_a'):
+    if not ip:
+        return
+
+    BANNED_IPS.add(ip)
+    _refresh_blocked_ip_count()
+
+    block_record = {
+        'ip': ip,
+        'blocked_at': datetime.now(),
+        'reason': reason,
+        'risk_score': risk_score,
+        'source': source,
+        'active': True
+    }
+    db.blocked_ips.update_one({'ip': ip}, {'$set': block_record}, upsert=True)
+
+    socketio.emit('ip_blocked', {
+        'ip': ip,
+        'reason': reason,
+        'risk_score': risk_score,
+        'source': source,
+        'timestamp': datetime.now().isoformat()
+    }, room=ADMIN_MONITORING_ROOM)
+
+
+def unblock_ip_address(ip):
+    if not ip:
+        return
+
+    if ip in BANNED_IPS:
+        BANNED_IPS.remove(ip)
+
+    db.blocked_ips.update_one(
+        {'ip': ip},
+        {'$set': {'active': False, 'unblocked_at': datetime.now()}},
+        upsert=True
+    )
+    _refresh_blocked_ip_count()
+
+    socketio.emit('ip_unblocked', {
+        'ip': ip,
+        'timestamp': datetime.now().isoformat()
+    }, room=ADMIN_MONITORING_ROOM)
+
+
+def load_active_blocks():
+    for record in db.blocked_ips.find({'active': True}, {'ip': 1}):
+        ip = record.get('ip')
+        if ip:
+            BANNED_IPS.add(ip)
+    _refresh_blocked_ip_count()
+
+
+load_active_blocks()
 
 @app.before_request
 def log_request():
@@ -79,13 +174,17 @@ def log_request():
 
     # ✅ WHITELIST: Always allow these endpoints even if blocked
     # This is CRITICAL for demo: attackers must reach System B endpoints!
+    # And we must allow the Admin panel to function even if the local IP is banned.
     whitelist = [
-        '/api/admin/ip/unban',          # Allow admin to unban (Admin panel needs this)
-        '/api/admin/users/export',      # ⭐ MUST allow for System B demo (Data exfiltration)
         '/api/auth/verify-api-key',     # ⭐ Honeytoken callback
         '/api/auth/reset-password',     # ⭐ Honeytoken callback
-        '/api/auth/verify-session'      # ⭐ Honeytoken callback
+        '/api/auth/verify-session',     # ⭐ Honeytoken callback
+        '/api/auth/login',              # Allow login so Admin can get in
+        '/api/security/status'          # Allow status polling for UX
     ]
+    
+    # We must allow the Admin to manage the system even if 127.0.0.1 gets banned
+    is_admin_route = request.path.startswith('/api/admin/')
 
     # Check IP Ban (Manual & AI Blocks)
     is_banned = client_ip in BANNED_IPS
@@ -98,7 +197,9 @@ def log_request():
             is_banned = True
             
     if is_banned:
-        if request.path not in whitelist:
+        # If the local IP is banned, we must STILL allow the admin to view the dashboard!
+        # Otherwise the demo breaks when both attacker and admin share 127.0.0.1
+        if request.path not in whitelist and not is_admin_route:
             print(f"⛔ Blocked request from {client_ip} / session {session_id} on {request.path}")
             return make_response(jsonify({'error': 'Access Denied - Security Risk Detected'}), 403)
     
@@ -148,18 +249,17 @@ def analyze_request(response):
             request_data['role'] = payload.get('role')
         except:
             pass
-    
     # System A: Analyze threat
     session_id = request_data.get('session_id', 'unknown')
     
     # Whitelist Admin & Auth endpoints from Analysis (Don't profile the admin!)
     # EXCEPT for the Exfiltration Demo endpoint - it needs to be analyzed
     # IMPORTANT: Skip ML processing entirely, not just override the result
-    if (request.path.startswith('/api/admin') or request.path.startswith('/api/auth')) and request.path != '/api/admin/users/export':
+    if (request.path.startswith('/api/admin') or request.path.startswith('/api/auth') or request.path == '/api/security/status') and request.path != '/api/admin/users/export':
         threat_analysis = {
             'action': 'allow',
             'risk_score': 0.0,
-            'reasoning': 'Trusted Admin/Auth Request',
+            'reasoning': 'Trusted Admin/Auth/System Request',
             'model_votes': {}
         }
         # MUST update request_data so it's logged correctly to DB
@@ -211,12 +311,29 @@ def analyze_request(response):
         blockchain_logger.log_threat_event(frontend_data)
         
         # Send real-time update via WebSocket
-        socketio.emit('threat_detected', frontend_data)
+        socketio.emit('threat_detected', frontend_data, room=ADMIN_MONITORING_ROOM)
     
     # Apply response based on action
     if threat_analysis['action'] == 'block':
         if request_data.get('ip'):
             BANNED_IPS.add(request_data['ip']) # Added to global list for Admin Dashboard
+        block_ip_address(
+            request_data.get('ip'),
+            reason=threat_analysis.get('reasoning', 'Critical threat detected'),
+            risk_score=threat_analysis.get('risk_score'),
+            source='system_a'
+        )
+        set_security_state(
+            'UNDER_ATTACK',
+            f"Attack contained from {request_data.get('ip', 'unknown IP')}",
+            incident={
+                'source': 'system_a',
+                'ip': request_data.get('ip'),
+                'action': 'block',
+                'risk_score': threat_analysis.get('risk_score'),
+                'reasoning': threat_analysis.get('reasoning')
+            }
+        )
         return jsonify({'error': 'Request blocked due to security concerns'}), 403
     
     elif threat_analysis['action'] == 'shadow_ban':
@@ -237,6 +354,15 @@ def health_check():
     return jsonify({
         'status': 'online',
         'service': 'E-Commerce Security Platform API',
+        'time': datetime.now().isoformat()
+    })
+
+
+@app.route('/api/security/status', methods=['GET'])
+def get_security_status():
+    """Public security posture endpoint for live frontend safe-state UX."""
+    return jsonify({
+        **SECURITY_STATE,
         'time': datetime.now().isoformat()
     })
 
@@ -563,11 +689,43 @@ def checkout():
 @token_required
 @admin_required
 def get_dashboard_stats():
-    """Get dashboard statistics"""
+    """Get dashboard statistics (SOC UI)"""
     total_users = db.users.count_documents({'is_canary': False})
     total_products = db.products.count_documents({})
-    total_orders = db.orders.count_documents({})
     
+    # Real-time traffic generation (Last 12 hours)
+    traffic_data = []
+    now = datetime.now()
+    for i in range(11, -1, -1):
+        hour_time = now - timedelta(hours=i)
+        start_period = hour_time.replace(minute=0, second=0, microsecond=0).isoformat()
+        end_period = (hour_time + timedelta(hours=1)).replace(minute=0, second=0, microsecond=0).isoformat()
+        
+        count = db.request_logs.count_documents({
+            'timestamp': {'$gte': start_period, '$lt': end_period}
+        })
+        traffic_data.append({
+            'time': hour_time.strftime('%H:00'),
+            'requests': count
+        })
+        
+    # MITRE Attack Grouping from blocks
+    blocked_ips = list(db.blocked_ips.find({}, {'_id': 0, 'reason': 1}))
+    mitre_counts = {}
+    for block in blocked_ips:
+        reason = block.get('reason', '')
+        mitre_data = mitre_mapper.map_event_to_mitre(reason, 'system_a')
+        tactic_name = mitre_data['tactic'].split(' ')[0] # e.g. "Reconnaissance"
+        mitre_counts[tactic_name] = mitre_counts.get(tactic_name, 0) + 1
+        
+    mitre_chart = [{'name': k, 'count': v} for k, v in mitre_counts.items()]
+    if not mitre_chart:
+        mitre_chart = [
+            {'name': 'Reconnaissance', 'count': 0},
+            {'name': 'Exfiltration', 'count': 0},
+            {'name': 'Impact', 'count': 0}
+        ]
+
     # Recent threats (last 24 hours)
     yesterday = (datetime.now() - timedelta(days=1)).isoformat()
     recent_threats = db.request_logs.count_documents({
@@ -580,13 +738,19 @@ def get_dashboard_stats():
     # Active sessions
     active_sessions = len(threat_detector.session_memory)
     
+    # Block counts
+    total_blocks = len(blocked_ips)
+    
     return jsonify({
         'users': total_users,
         'products': total_products,
-        'orders': total_orders,
         'threats_24h': recent_threats,
         'active_sessions': active_sessions,
-        'blockchain': blockchain_stats
+        'total_blocks': total_blocks,
+        'blockchain': blockchain_stats,
+        'security_state': SECURITY_STATE.copy(),
+        'traffic_data': traffic_data,
+        'mitre_data': mitre_chart
     })
 
 @app.route('/api/admin/threats/live', methods=['GET'])
@@ -629,13 +793,17 @@ def clear_threats():
         
         # 3. Clear Manual Bans
         BANNED_IPS.clear()
+        db.blocked_ips.update_many({}, {'$set': {'active': False, 'unblocked_at': datetime.now()}})
         
         # 4. Clear AI Memory
         threat_detector.session_memory.clear()
         threat_detector.decision_history.clear()
         
         # 5. Clear Blockchain (Optional - for demo/reset purposes)
-        blockchain_logger.chain = [blockchain_logger.create_genesis_block()]
+        blockchain_logger.blockchain = blockchain_logger.blockchain.__class__(
+            difficulty=blockchain_logger.blockchain.difficulty
+        )
+        set_security_state('NORMAL', 'System reset complete', safe_mode=False, incident=None)
         
         return jsonify({
             'message': f'System Reset: Logs, Bans, Honeytokens, and AI Memory cleared successfully.',
@@ -684,6 +852,47 @@ def get_canary_stats():
     
     return jsonify(stats)
 
+@app.route('/api/admin/backup/snapshot', methods=['POST'])
+@token_required
+@admin_required
+def create_backup():
+    """Create an air-gapped backup snapshot"""
+    snapshot_id, users_count, products_count = backup_manager.create_snapshot()
+    return jsonify({
+        'message': 'Encrypted Backup Snapshot created in Secure Enclave',
+        'snapshot_id': snapshot_id,
+        'records_secured': users_count + products_count
+    })
+
+@app.route('/api/admin/backup/restore', methods=['POST'])
+@token_required
+@admin_required
+def restore_backup():
+    """Restore database from an air-gapped snapshot"""
+    data = request.json
+    success = backup_manager.restore_snapshot(data.get('snapshot_id'))
+    if success:
+        return jsonify({'message': 'Database restored successfully to clean state.'})
+    return jsonify({'error': 'Snapshot not found or corrupted.'}), 400
+
+@app.route('/api/admin/backup/list', methods=['GET'])
+@token_required
+@admin_required
+def get_backups():
+    """List all available snapshots"""
+    return jsonify({'backups': backup_manager.list_backups()})
+
+@app.route('/api/admin/reports/mitre', methods=['GET'])
+@token_required
+@admin_required
+def get_mitre_report():
+    """Generate dynamic MITRE ATT&CK threat mapping report"""
+    try:
+        report = mitre_mapper.generate_report()
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/admin/users/export', methods=['GET'])
 @token_required
 def export_users():
@@ -718,7 +927,28 @@ def export_users():
         
         # ALERT: Canary accessed!
         print(f"🚨 SYSTEM B TRIGGERED: {len(canaries_found)} canaries accessed!")
-        socketio.emit('canary_triggered', canary_check)  # Remove broadcast=True
+        attacker_ip = request.headers.get('X-Mock-IP', request.remote_addr)
+        socketio.emit('canary_triggered', {
+            **canary_check,
+            'attacker_ip': attacker_ip,
+            'timestamp': datetime.now().isoformat()
+        }, room=ADMIN_MONITORING_ROOM)
+        block_ip_address(
+            attacker_ip,
+            reason='Canary record accessed during exfiltration',
+            risk_score=1.0,
+            source='system_b'
+        )
+        set_security_state(
+            'BREACH_CONFIRMED',
+            'Safe mode active after canary-confirmed exfiltration',
+            incident={
+                'source': 'system_b',
+                'ip': attacker_ip,
+                'action': 'contain_and_trace',
+                'reasoning': canary_check['message']
+            }
+        )
         
         # Log to blockchain
         blockchain_logger.log_threat_event({
@@ -770,17 +1000,21 @@ def unban_ip():
         return jsonify({'error': 'IP address required'}), 400
     
     if ip in BANNED_IPS:
-        BANNED_IPS.remove(ip)
+        unblock_ip_address(ip)
         # Also try to reset any sessions associated with this IP if possible
         # For now, we rely on the session_id from the specific client, 
         # but in a demo, unbanning might imply "forgiving" the attacker.
         # Since we don't have the session ID here easily without tracking, 
         # we might need a workaround or just rely on manual clearing.
         threat_detector.reset_session(ip=ip) 
+        if not BANNED_IPS:
+            set_security_state('NORMAL', 'Traffic normal', safe_mode=False, incident=None)
         return jsonify({'message': f'IP {ip} unbanned successfully'})
     
     # Allow unbanning even if not in manual list (to clear session memory)
     threat_detector.reset_session(ip=ip) 
+    if not BANNED_IPS:
+        set_security_state('NORMAL', 'Traffic normal', safe_mode=False, incident=None)
     return jsonify({'message': f'IP {ip} unbanned / session reset'})
 
 @app.route('/api/admin/ip/block', methods=['POST'])
@@ -792,7 +1026,16 @@ def manual_block_ip():
     ip = data.get('ip')
     
     if ip:
-        BANNED_IPS.add(ip)
+        block_ip_address(ip, reason='Manual admin block', source='manual')
+        set_security_state(
+            'UNDER_ATTACK',
+            f'Admin manually isolated {ip}',
+            incident={
+                'source': 'manual',
+                'ip': ip,
+                'action': 'manual_block'
+            }
+        )
         return jsonify({'message': f'IP {ip} blocked successfully'})
     
     return jsonify({'error': 'IP address required'}), 400
@@ -802,9 +1045,20 @@ def manual_block_ip():
 @admin_required
 def get_banned_ips():
     """Get list of banned IPs"""
+    active_blocks = []
+    for record in db.blocked_ips.find({'active': True}, {'_id': 0, 'ip': 1, 'blocked_at': 1, 'reason': 1, 'risk_score': 1, 'source': 1}):
+        blocked_at = record.get('blocked_at')
+        active_blocks.append({
+            'ip': record.get('ip'),
+            'blocked_at': blocked_at.isoformat() if hasattr(blocked_at, 'isoformat') else blocked_at,
+            'reason': record.get('reason'),
+            'risk_score': record.get('risk_score'),
+            'source': record.get('source')
+        })
     return jsonify({
         'banned_ips': list(BANNED_IPS),
-        'count': len(BANNED_IPS)
+        'count': len(BANNED_IPS),
+        'records': active_blocks
     })
 
 # ==================== WEBSOCKET EVENTS ====================
@@ -823,7 +1077,9 @@ def handle_disconnect():
 @socketio.on('join_admin')
 def handle_join_admin():
     """Admin joins real-time monitoring"""
-    emit('joined', {'room': 'admin_monitor'})
+    join_room(ADMIN_MONITORING_ROOM)
+    emit('joined', {'room': ADMIN_MONITORING_ROOM})
+    emit('security_state', SECURITY_STATE.copy())
 
 @socketio.on('subscribe_threats')
 def handle_subscribe_threats():
@@ -846,6 +1102,23 @@ def verify_api_key_honeytoken():
         if honeytoken_generator.is_honeytoken(api_key):
             # 🚨 HONEYTOKEN TRIGGERED!
             breach_data = honeytoken_generator.trigger_honeytoken_alert(api_key, request)
+            attacker_ip = breach_data['usage_context'].get('attacker_ip') if breach_data else None
+            block_ip_address(
+                attacker_ip,
+                reason='Honeytoken API key used after exfiltration',
+                risk_score=1.0,
+                source='honeytoken'
+            )
+            set_security_state(
+                'BREACH_CONFIRMED',
+                'Safe mode active after honeytoken validation callback',
+                incident={
+                    'source': 'honeytoken',
+                    'ip': attacker_ip,
+                    'action': 'contain_and_trace',
+                    'reasoning': 'Fake API key was used by attacker'
+                }
+            )
             
             # Return fake success to keep attacker engaged
             return jsonify({
@@ -872,6 +1145,23 @@ def reset_password_honeytoken():
         if honeytoken_generator.is_honeytoken(reset_token):
             # 🚨 HONEYTOKEN TRIGGERED!
             breach_data = honeytoken_generator.trigger_honeytoken_alert(reset_token, request)
+            attacker_ip = breach_data['usage_context'].get('attacker_ip') if breach_data else None
+            block_ip_address(
+                attacker_ip,
+                reason='Honeytoken reset token used after exfiltration',
+                risk_score=1.0,
+                source='honeytoken'
+            )
+            set_security_state(
+                'BREACH_CONFIRMED',
+                'Safe mode active after honeytoken reset callback',
+                incident={
+                    'source': 'honeytoken',
+                    'ip': attacker_ip,
+                    'action': 'contain_and_trace',
+                    'reasoning': 'Fake password reset token was used by attacker'
+                }
+            )
             
             # Return fake success
             return jsonify({
@@ -898,6 +1188,23 @@ def verify_session_honeytoken():
         if honeytoken_generator.is_honeytoken(session_token):
             # 🚨 HONEYTOKEN TRIGGERED!
             breach_data = honeytoken_generator.trigger_honeytoken_alert(session_token, request)
+            attacker_ip = breach_data['usage_context'].get('attacker_ip') if breach_data else None
+            block_ip_address(
+                attacker_ip,
+                reason='Honeytoken session token used after exfiltration',
+                risk_score=1.0,
+                source='honeytoken'
+            )
+            set_security_state(
+                'BREACH_CONFIRMED',
+                'Safe mode active after honeytoken session callback',
+                incident={
+                    'source': 'honeytoken',
+                    'ip': attacker_ip,
+                    'action': 'contain_and_trace',
+                    'reasoning': 'Fake session token was used by attacker'
+                }
+            )
             
             # Return fake session data
             return jsonify({

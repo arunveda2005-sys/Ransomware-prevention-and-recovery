@@ -1,18 +1,34 @@
 import React from 'react';
-import { AppBar, Toolbar, Typography, Button, Box } from '@mui/material';
+import { AppBar, Toolbar, Typography, Button, Box, Chip } from '@mui/material';
 import { Link as RouterLink } from 'react-router-dom';
 import ShoppingCartIcon from '@mui/icons-material/ShoppingCart';
 import SecurityIcon from '@mui/icons-material/Security';
 import BugReportIcon from '@mui/icons-material/BugReport';
 
-function Navbar({ user, onLogout }) {
+function Navbar({ user, onLogout, securityState }) {
+    const safeMode = securityState?.safe_mode;
+    const modeLabel = securityState?.mode || 'NORMAL';
+
     return (
-        <AppBar position="static">
+        <AppBar position="static" color={safeMode ? 'error' : 'primary'}>
             <Toolbar>
                 <SecurityIcon sx={{ mr: 2 }} />
                 <Typography variant="h6" component={RouterLink} to="/" sx={{ flexGrow: 1, textDecoration: 'none', color: 'inherit' }}>
                     E-Commerce Defense
                 </Typography>
+
+                <Chip
+                    label={safeMode ? `SAFE MODE: ${modeLabel}` : modeLabel}
+                    size="small"
+                    color={safeMode ? 'warning' : 'success'}
+                    sx={{ mr: 2, fontWeight: 'bold' }}
+                />
+
+                {safeMode && (
+                    <Typography sx={{ mr: 2, display: { xs: 'none', md: 'block' }, opacity: 0.9 }}>
+                        {securityState?.message || 'Protective controls active'}
+                    </Typography>
+                )}
 
                 <Box sx={{ display: 'flex', gap: 2 }}>
 

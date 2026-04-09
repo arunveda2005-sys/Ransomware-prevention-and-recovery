@@ -17,6 +17,7 @@ def seed_database():
     db.orders.delete_many({})
     db.request_logs.delete_many({}) # Clear threat logs
     db.carts.delete_many({})
+    db.blocked_ips.delete_many({}) # Clear active IP bans
     
     # Create admin user
     print("Creating admin user...")

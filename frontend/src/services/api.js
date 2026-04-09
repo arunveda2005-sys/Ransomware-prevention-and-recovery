@@ -87,7 +87,15 @@ export const adminAPI = {
     exportUsers: () => api.get('/admin/users/export'),
     unbanIP: (ip) => api.post('/admin/ip/unban', { ip }),
     blockIP: (ip) => api.post('/admin/ip/block', { ip }),
-    getBannedIPs: () => api.get('/admin/ip/list')
+    getBannedIPs: () => api.get('/admin/ip/list'),
+    getMitreReport: () => api.get('/admin/reports/mitre'),
+    createBackup: () => api.post('/admin/backup/snapshot'),
+    restoreBackup: (snapshot_id) => api.post('/admin/backup/restore', { snapshot_id }),
+    listBackups: () => api.get('/admin/backup/list')
+};
+
+export const securityAPI = {
+    getStatus: () => api.get('/security/status')
 };
 
 export default api;

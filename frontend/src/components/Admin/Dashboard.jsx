@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Container, Grid, Paper, Typography, Button, Box, TextField, CircularProgress
+    Container, Grid, Paper, Typography, Button, Box, TextField, CircularProgress, Alert
 } from '@mui/material';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
 import { adminAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 
@@ -55,6 +56,26 @@ function Dashboard() {
         }
     };
 
+    const handleMitreReport = async () => {
+        try {
+            const response = await adminAPI.getMitreReport();
+
+            // Format JSON and trigger download
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(response.data, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `MITRE_Security_Report_${timestamp}.json`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+
+            toast.success("MITRE Report Downloaded Successfully!");
+        } catch (err) {
+            toast.error('Failed to generate MITRE report');
+        }
+    };
+
     if (loading) {
         return (
             <Container sx={{ mt: 4, textAlign: 'center' }}>
@@ -63,18 +84,24 @@ function Dashboard() {
         );
     }
 
+    const hasMitreRecords = stats?.total_blocks > 0;
+
     return (
-        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Container maxWidth="xl" sx={{ mt: 4, mb: 4 }}>
             <Typography variant="h4" gutterBottom>
-                Admin Dashboard
+                Security Operations Center (SOC)
             </Typography>
 
-            {/* Statistics */}
+            <Alert severity={stats?.security_state?.safe_mode ? 'error' : 'success'} sx={{ mb: 3 }}>
+                <strong>{stats?.security_state?.mode || 'NORMAL'}</strong> {stats?.security_state?.message || 'Traffic normal'}
+            </Alert>
+
+            {/* SOC Statistics */}
             <Grid container spacing={3} sx={{ mb: 4 }}>
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3, textAlign: 'center' }}>
                         <Typography variant="h6" color="text.secondary">
-                            Users
+                            Active Monitored Users
                         </Typography>
                         <Typography variant="h3">
                             {stats?.users || 0}
@@ -85,10 +112,10 @@ function Dashboard() {
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3, textAlign: 'center' }}>
                         <Typography variant="h6" color="text.secondary">
-                            Products
+                            Active AI Sessions
                         </Typography>
                         <Typography variant="h3">
-                            {stats?.products || 0}
+                            {stats?.active_sessions || 0}
                         </Typography>
                     </Paper>
                 </Grid>
@@ -96,10 +123,10 @@ function Dashboard() {
                 <Grid item xs={12} md={3}>
                     <Paper sx={{ p: 3, textAlign: 'center' }}>
                         <Typography variant="h6" color="text.secondary">
-                            Orders
+                            Total Banned IPs
                         </Typography>
-                        <Typography variant="h3">
-                            {stats?.orders || 0}
+                        <Typography variant="h3" color="error">
+                            {stats?.total_blocks || 0}
                         </Typography>
                     </Paper>
                 </Grid>
@@ -130,6 +157,42 @@ function Dashboard() {
                 </Grid>
             </Grid>
 
+            {/* Visualizations */}
+            <Grid container spacing={3} sx={{ mb: 4 }}>
+                <Grid item xs={12} md={8}>
+                    <Paper sx={{ p: 3, height: 400 }}>
+                        <Typography variant="h6" gutterBottom>
+                            Real-time Traffic Analysis (12h)
+                        </Typography>
+                        <ResponsiveContainer width="100%" height="90%">
+                            <LineChart data={stats?.traffic_data || []}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="time" />
+                                <YAxis />
+                                <Tooltip />
+                                <Line type="monotone" dataKey="requests" stroke="#8884d8" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 8 }} />
+                            </LineChart>
+                        </ResponsiveContainer>
+                    </Paper>
+                </Grid>
+                <Grid item xs={12} md={4}>
+                    <Paper sx={{ p: 3, height: 400 }}>
+                        <Typography variant="h6" gutterBottom>
+                            MITRE ATT&CK Groupings
+                        </Typography>
+                        <ResponsiveContainer width="100%" height="90%">
+                            <BarChart data={stats?.mitre_data || []}>
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="name" />
+                                <YAxis />
+                                <Tooltip />
+                                <Bar dataKey="count" fill="#f44336" />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </Paper>
+                </Grid>
+            </Grid>
+
             {/* Blockchain Stats */}
             <Paper sx={{ p: 3, mb: 3 }}>
                 <Typography variant="h6" gutterBottom>
@@ -154,57 +217,69 @@ function Dashboard() {
                 </Grid>
             </Paper>
 
-            {/* Canary Deployment */}
-            <Paper sx={{ p: 3, mb: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                    Deploy Smart Canaries
-                </Typography>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Generate ML-based honeypot records to detect data breaches
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-                    <TextField
-                        type="number"
-                        label="Number of Canaries"
-                        value={canaryCount}
-                        onChange={(e) => setCanaryCount(parseInt(e.target.value))}
-                        sx={{ width: 200 }}
-                    />
-                    <Button
-                        variant="contained"
-                        onClick={handleDeployCanaries}
-                        disabled={deploying}
-                    >
-                        {deploying ? 'Deploying...' : 'Deploy Canaries'}
-                    </Button>
-                </Box>
-            </Paper>
-
-            {/* Quick Actions */}
-            <Paper sx={{ p: 3 }}>
-                <Typography variant="h6" gutterBottom>
-                    Quick Actions
-                </Typography>
-                <Typography variant="body2" color="text.secondary" gutterBottom>
-                    Manage system and monitor threats
-                </Typography>
-                <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
-                    <Button
-                        variant="contained"
-                        color="error"
-                        onClick={() => navigate('/admin/attacks')}
-                    >
-                        View Live Attacks
-                    </Button>
-                    <Button
-                        variant="outlined"
-                        color="warning"
-                        onClick={handleExportUsers}
-                    >
-                        Export Users (Monitored)
-                    </Button>
-                </Box>
-            </Paper>
+            {/* Canary Deployment & Actions */}
+            <Grid container spacing={3}>
+                <Grid item xs={12} md={6}>
+                    <Paper sx={{ p: 3, height: '100%' }}>
+                        <Typography variant="h6" gutterBottom>
+                            Deploy Smart Canaries
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Generate ML-based honeypot records to detect data breaches
+                        </Typography>
+                        <Box sx={{ display: 'flex', gap: 2, mt: 2 }}>
+                            <TextField
+                                type="number"
+                                label="Number of Canaries"
+                                value={canaryCount}
+                                onChange={(e) => setCanaryCount(parseInt(e.target.value))}
+                                sx={{ width: 200 }}
+                            />
+                            <Button
+                                variant="contained"
+                                onClick={handleDeployCanaries}
+                                disabled={deploying}
+                            >
+                                {deploying ? 'Deploying...' : 'Deploy Canaries'}
+                            </Button>
+                        </Box>
+                    </Paper>
+                </Grid>
+                <Grid item xs={12} md={6}>
+                    <Paper sx={{ p: 3, height: '100%' }}>
+                        <Typography variant="h6" gutterBottom>
+                            Quick SOC Actions
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" gutterBottom>
+                            Manage system compliance and monitor threats
+                        </Typography>
+                        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, mt: 2 }}>
+                            <Button
+                                variant="contained"
+                                color="error"
+                                onClick={() => navigate('/admin/attacks')}
+                            >
+                                View Live Attacks
+                            </Button>
+                            <Button
+                                variant="outlined"
+                                color="warning"
+                                onClick={handleExportUsers}
+                            >
+                                Export Users (Monitored)
+                            </Button>
+                            <Button
+                                variant="outlined"
+                                color="info"
+                                onClick={handleMitreReport}
+                                disabled={!hasMitreRecords}
+                            >
+                                {hasMitreRecords ? 'Generate MITRE ATT&CK Report' : 'No Threat Records for MITRE'}
+                            </Button>
+                        </Box>
+                    </Paper>
+                </Grid>
+            </Grid>
         </Container>
     );
 }

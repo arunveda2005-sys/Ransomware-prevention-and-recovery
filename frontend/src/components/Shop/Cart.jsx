@@ -1,16 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import {
     Container, Paper, Typography, Box, Button, List, ListItem,
-    ListItemText, Divider, CircularProgress
+    ListItemText, Divider, CircularProgress, Alert
 } from '@mui/material';
 import { cartAPI } from '../../services/api';
 import { toast } from 'react-toastify';
 import { useNavigate } from 'react-router-dom';
 
-function Cart() {
+function Cart({ securityState }) {
     const [cart, setCart] = useState({ items: [], total: 0 });
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
+    const safeMode = securityState?.safe_mode;
 
     useEffect(() => {
         loadCart();
@@ -52,6 +53,12 @@ function Cart() {
                     Shopping Cart
                 </Typography>
 
+                {safeMode && (
+                    <Alert severity="error" sx={{ mb: 3 }}>
+                        {securityState?.message || 'Safe mode is active.'} Checkout is paused while the platform contains the incident.
+                    </Alert>
+                )}
+
                 {cart.items.length === 0 ? (
                     <Typography variant="body1" color="text.secondary" sx={{ mt: 2 }}>
                         Your cart is empty
@@ -92,8 +99,9 @@ function Cart() {
                             size="large"
                             sx={{ mt: 3 }}
                             onClick={handleCheckout}
+                            disabled={safeMode}
                         >
-                            Checkout
+                            {safeMode ? 'Checkout Locked' : 'Checkout'}
                         </Button>
                     </>
                 )}

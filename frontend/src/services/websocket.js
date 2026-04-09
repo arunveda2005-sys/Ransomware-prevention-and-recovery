@@ -6,6 +6,8 @@ let socket = null;
 let threatListeners = [];
 let canaryListeners = [];
 let honeytokenListeners = [];
+let securityStateListeners = [];
+let blockedIpListeners = [];
 
 export const initWebSocket = (token) => {
     if (socket) {
@@ -42,6 +44,16 @@ export const initWebSocket = (token) => {
         honeytokenListeners.forEach(listener => listener(data));
     });
 
+    socket.on('security_state', (data) => {
+        console.log('Security state:', data);
+        securityStateListeners.forEach(listener => listener(data));
+    });
+
+    socket.on('ip_blocked', (data) => {
+        console.log('IP blocked:', data);
+        blockedIpListeners.forEach(listener => listener(data));
+    });
+
     return socket;
 };
 
@@ -70,6 +82,22 @@ export const subscribeToHoneytokens = (callback) => {
     };
 };
 
+export const subscribeToSecurityState = (callback) => {
+    securityStateListeners.push(callback);
+
+    return () => {
+        securityStateListeners = securityStateListeners.filter(l => l !== callback);
+    };
+};
+
+export const subscribeToBlockedIps = (callback) => {
+    blockedIpListeners.push(callback);
+
+    return () => {
+        blockedIpListeners = blockedIpListeners.filter(l => l !== callback);
+    };
+};
+
 export const disconnectWebSocket = () => {
     if (socket) {
         socket.disconnect();
@@ -79,4 +107,6 @@ export const disconnectWebSocket = () => {
     threatListeners = [];
     canaryListeners = [];
     honeytokenListeners = [];
+    securityStateListeners = [];
+    blockedIpListeners = [];
 };
