@@ -91,7 +91,8 @@ export const adminAPI = {
     getMitreReport: () => api.get('/admin/reports/mitre'),
     createBackup: () => api.post('/admin/backup/snapshot'),
     restoreBackup: (snapshot_id) => api.post('/admin/backup/restore', { snapshot_id }),
-    listBackups: () => api.get('/admin/backup/list')
+    listBackups: () => api.get('/admin/backup/list'),
+    downloadBackup: (snapshot_id) => api.get(`/admin/backup/download/${snapshot_id}`)
 };
 
 export const securityAPI = {

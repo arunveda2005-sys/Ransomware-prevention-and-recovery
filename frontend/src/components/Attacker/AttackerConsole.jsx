@@ -192,6 +192,22 @@ const AttackerConsole = () => {
                     headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
                 }
             })
+        },
+        {
+            id: 'ransomware',
+            name: 'Ransomware Script (Wipe)',
+            description: 'Executes db.users.delete_many({}) to wipe the DB',
+            icon: <WarningIcon />,
+            color: '#ff0000',
+            action: () => runAttack('ransomware', {
+                name: 'Ransomware Wipe',
+                endpoint: '/attacker/ransomware',
+                count: 1,
+                delay: 0,
+                options: {
+                    method: 'POST'
+                }
+            })
         }
     ];
 

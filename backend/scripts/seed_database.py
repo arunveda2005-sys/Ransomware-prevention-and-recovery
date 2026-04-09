@@ -65,7 +65,7 @@ def seed_database():
             'price': 1299.99,
             'category': 'Electronics',
             'stock': 50,
-            'image_url': 'https://via.placeholder.com/300?text=Laptop',
+            'image_url': 'https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=500&auto=format&fit=crop&q=60',
             'created_at': datetime.now().isoformat()
         },
         {
@@ -74,7 +74,7 @@ def seed_database():
             'price': 29.99,
             'category': 'Accessories',
             'stock': 200,
-            'image_url': 'https://via.placeholder.com/300?text=Mouse',
+            'image_url': 'https://images.unsplash.com/photo-1527864550417-7fd91fc51a46?w=500&auto=format&fit=crop&q=60',
             'created_at': datetime.now().isoformat()
         },
         {
@@ -83,7 +83,7 @@ def seed_database():
             'price': 49.99,
             'category': 'Accessories',
             'stock': 100,
-            'image_url': 'https://via.placeholder.com/300?text=Hub',
+            'image_url': 'https://images.unsplash.com/photo-1596752002360-1e58284d7d13?w=500&auto=format&fit=crop&q=60',
             'created_at': datetime.now().isoformat()
         },
         {
@@ -92,7 +92,7 @@ def seed_database():
             'price': 149.99,
             'category': 'Electronics',
             'stock': 75,
-            'image_url': 'https://via.placeholder.com/300?text=Keyboard',
+            'image_url': 'https://images.unsplash.com/photo-1595225476474-87563907a212?w=500&auto=format&fit=crop&q=60',
             'created_at': datetime.now().isoformat()
         },
         {
@@ -101,16 +101,16 @@ def seed_database():
             'price': 399.99,
             'category': 'Electronics',
             'stock': 30,
-            'image_url': 'https://via.placeholder.com/300?text=Monitor',
+            'image_url': 'https://images.unsplash.com/photo-1527443224154-c4a3942d3acf?w=500&auto=format&fit=crop&q=60',
             'created_at': datetime.now().isoformat()
         },
         {
-            'name': 'Webcam HD',
-            'description': '1080p HD webcam with built-in microphone',
-            'price': 79.99,
+            'name': 'Noise Cancelling Headphones',
+            'description': 'Premium over-ear headphones with active noise cancellation',
+            'price': 249.99,
             'category': 'Electronics',
-            'stock': 120,
-            'image_url': 'https://via.placeholder.com/300?text=Webcam',
+            'stock': 150,
+            'image_url': 'https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=500&auto=format&fit=crop&q=60',
             'created_at': datetime.now().isoformat()
         }
     ]

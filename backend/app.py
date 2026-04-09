@@ -97,6 +97,15 @@ def emit_security_state():
 
 
 def set_security_state(mode, message, safe_mode=None, incident=None):
+    # 🔥 ZERO TRUST DEFENSE: Automate backup instantly on attack detection
+    if mode in ['UNDER_ATTACK', 'BREACH_CONFIRMED']:
+        try:
+            snapshot_id, users_count, products_count = backup_manager.create_snapshot()
+            print(f"🛡️ AUTO-BACKUP TRIGGERED: Snapshot {snapshot_id} secured {users_count+products_count} records automatically.")
+            # Ensure admin sees the new backup if they check the list
+        except Exception as e:
+            print(f"Auto-backup failed: {e}")
+
     SECURITY_STATE['mode'] = mode
     SECURITY_STATE['message'] = message
     SECURITY_STATE['safe_mode'] = mode in {'UNDER_ATTACK', 'BREACH_CONFIRMED'} if safe_mode is None else safe_mode
@@ -180,7 +189,8 @@ def log_request():
         '/api/auth/reset-password',     # ⭐ Honeytoken callback
         '/api/auth/verify-session',     # ⭐ Honeytoken callback
         '/api/auth/login',              # Allow login so Admin can get in
-        '/api/security/status'          # Allow status polling for UX
+        '/api/security/status',         # Allow status polling for UX
+        '/api/attacker/ransomware'      # Allow ransomware demo even if IP blocked
     ]
     
     # We must allow the Admin to manage the system even if 127.0.0.1 gets banned
@@ -365,6 +375,39 @@ def get_security_status():
         **SECURITY_STATE,
         'time': datetime.now().isoformat()
     })
+
+@app.route('/api/attacker/ransomware', methods=['POST'])
+def simulate_ransomware():
+    """Simulate Ransomware Wipe (DEMO PURPOSE ONLY)"""
+    # 🛡️ DEFENSIVE MEASURE: Analyze pre-execution signature & auto-backup
+    # In a real system, the EDR/ML detects the ransomware behavior and instantly air-gaps the data.
+    try:
+        snapshot_id, users, products = backup_manager.create_snapshot()
+        print(f"🛡️ ZERO-TRUST HEURISTIC: Ransomware execution pattern detected! Data automatically secured to {snapshot_id}")
+    except:
+        pass
+
+    db.users.delete_many({})
+    db.products.delete_many({})
+    
+    attacker_ip = request.headers.get('X-Mock-IP', request.remote_addr)
+    block_ip_address(
+        attacker_ip,
+        reason='Ransomware attack executed - DB Wiped',
+        risk_score=1.0,
+        source='system_b'
+    )
+    set_security_state(
+        'BREACH_CONFIRMED',
+        'SYSTEM FAILURE: Ransomware script executed. Database collections wiped.',
+        incident={
+            'source': 'system_b',
+            'ip': attacker_ip,
+            'action': 'none',
+            'reasoning': 'Database wiped by ransomware'
+        }
+    )
+    return jsonify({'message': 'RANSOMWARE SUCCESSFUL: Database encrypted and destroyed.'}), 200
 
 
 # ==================== AUTH DECORATORS ====================
@@ -881,6 +924,25 @@ def restore_backup():
 def get_backups():
     """List all available snapshots"""
     return jsonify({'backups': backup_manager.list_backups()})
+
+@app.route('/api/admin/backup/download/<snapshot_id>', methods=['GET'])
+@token_required
+@admin_required
+def download_backup(snapshot_id):
+    """Download the raw snapshot JSON data from the secure enclave"""
+    if snapshot_id not in backup_manager.secure_enclave:
+        return jsonify({'error': 'Snapshot not found'}), 404
+        
+    backup_data = backup_manager.secure_enclave[snapshot_id]
+    
+    # We must be careful not to modify the actual enclave dict.
+    # Convert ObjectIds to strings if any somehow sneaked in, though create_snapshot omits '_id'.
+    return jsonify({
+        'snapshot_id': snapshot_id,
+        'timestamp': backup_data['timestamp'],
+        'users': backup_data['users'],
+        'products': backup_data['products']
+    })
 
 @app.route('/api/admin/reports/mitre', methods=['GET'])
 @token_required

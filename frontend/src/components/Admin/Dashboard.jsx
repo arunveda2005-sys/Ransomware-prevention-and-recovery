@@ -12,10 +12,14 @@ function Dashboard() {
     const [loading, setLoading] = useState(true);
     const [canaryCount, setCanaryCount] = useState(50);
     const [deploying, setDeploying] = useState(false);
+    const [backups, setBackups] = useState([]);
+    const [creatingBackup, setCreatingBackup] = useState(false);
+    const [restoringBackup, setRestoringBackup] = useState(null);
     const navigate = useNavigate();
 
     useEffect(() => {
         loadStats();
+        loadBackups();
     }, []);
 
     const loadStats = async () => {
@@ -73,6 +77,58 @@ function Dashboard() {
             toast.success("MITRE Report Downloaded Successfully!");
         } catch (err) {
             toast.error('Failed to generate MITRE report');
+        }
+    };
+
+    const loadBackups = async () => {
+        try {
+            const res = await adminAPI.listBackups();
+            setBackups(res.data.backups || []);
+        } catch (err) {
+            console.error(err);
+        }
+    };
+
+    const handleTakeSnapshot = async () => {
+        try {
+            setCreatingBackup(true);
+            const res = await adminAPI.createBackup();
+            toast.success(res.data.message);
+            loadBackups();
+        } catch (err) {
+            toast.error('Failed to create snapshot');
+        } finally {
+            setCreatingBackup(false);
+        }
+    };
+
+    const handleRestore = async (snapshotId) => {
+        try {
+            setRestoringBackup(snapshotId);
+            const res = await adminAPI.restoreBackup(snapshotId);
+            toast.success(res.data.message);
+            loadStats();
+        } catch (err) {
+            toast.error(err.response?.data?.error || 'Failed to restore');
+        } finally {
+            setRestoringBackup(null);
+        }
+    };
+
+    const handleDownloadSnapshot = async (snapshotId) => {
+        try {
+            const response = await adminAPI.downloadBackup(snapshotId);
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(response.data, null, 2));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", `${snapshotId}_raw_data.json`);
+            document.body.appendChild(downloadAnchorNode);
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+            
+            toast.success("Snapshot JSON downloaded successfully!");
+        } catch (err) {
+            toast.error(err.response?.data?.error || 'Failed to download snapshot data');
         }
     };
 
@@ -277,6 +333,69 @@ function Dashboard() {
                                 {hasMitreRecords ? 'Generate MITRE ATT&CK Report' : 'No Threat Records for MITRE'}
                             </Button>
                         </Box>
+                    </Paper>
+                </Grid>
+
+                {/* Secure Offline Backup (Zero Trust) */}
+                <Grid item xs={12}>
+                    <Paper sx={{ p: 3 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                            <Box>
+                                <Typography variant="h6" gutterBottom>
+                                    Secure Offline Backup (Zero Trust)
+                                </Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                    Create isolated, air-gapped snapshots to recover from ransomware/destructive attacks.
+                                </Typography>
+                            </Box>
+                            <Button 
+                                variant="contained" 
+                                color="success"
+                                onClick={handleTakeSnapshot}
+                                disabled={creatingBackup}
+                            >
+                                {creatingBackup ? 'Creating...' : 'Take Snapshot'}
+                            </Button>
+                        </Box>
+
+                        {backups.length === 0 ? (
+                            <Typography variant="body2" sx={{ opacity: 0.7 }}>No backups found.</Typography>
+                        ) : (
+                            <Grid container spacing={2}>
+                                {backups.map(backup => (
+                                    <Grid item xs={12} md={4} key={backup.id}>
+                                        <Paper sx={{ p: 2, bgcolor: '#f5f5f5', border: '1px solid #ddd' }}>
+                                            <Typography variant="subtitle2" sx={{ fontFamily: 'monospace', color: '#333' }}>
+                                                {backup.id}
+                                            </Typography>
+                                            <Typography variant="caption" display="block" sx={{ mb: 1, color: '#666' }}>
+                                                {new Date(backup.timestamp).toLocaleString()}
+                                            </Typography>
+                                            <Button 
+                                                size="small" 
+                                                variant="contained" 
+                                                color="primary"
+                                                fullWidth
+                                                onClick={() => handleRestore(backup.id)}
+                                                disabled={restoringBackup === backup.id}
+                                            >
+                                                {restoringBackup === backup.id ? 'Restoring...' : 'Restore This Snapshot'}
+                                            </Button>
+                                            <Button 
+                                                size="small" 
+                                                variant="outlined" 
+                                                color="info"
+                                                fullWidth
+                                                onClick={() => handleDownloadSnapshot(backup.id)}
+                                                sx={{ mt: 1 }}
+                                            >
+                                                Download JSON
+                                            </Button>
+                                        </Paper>
+                                    </Grid>
+                                ))}
+                            </Grid>
+                        )}
                     </Paper>
                 </Grid>
             </Grid>
