@@ -49,8 +49,10 @@ api.interceptors.response.use(
                 // Clear Access
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
-                // Clear mockIp so the "attacker" can try again with a new identity
-                localStorage.removeItem('mockIp');
+                
+                // Do NOT clear mockIp! 
+                // If we clear it, they get a new IP and bypass the ban!
+                // localStorage.removeItem('mockIp');
 
                 // Force Redirect to Login
                 window.location.href = '/login';
