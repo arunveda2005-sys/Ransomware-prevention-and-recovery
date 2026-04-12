@@ -2,6 +2,7 @@ import json
 import os
 import threading
 from datetime import datetime
+from typing import List, Optional, Dict, Any
 
 try:
     import boto3
@@ -62,7 +63,7 @@ class BackupManager:
         except Exception as e:
             print(f"⚠️  S3 upload failed for {snapshot_id}: {e}")
 
-    def _fetch_from_s3(self, snapshot_id: str) -> dict | None:
+    def _fetch_from_s3(self, snapshot_id: str) -> Optional[Dict[str, Any]]:
         """Download and parse a snapshot from S3. Returns None on failure."""
         if not self.s3_client:
             return None
@@ -84,7 +85,7 @@ class BackupManager:
             print(f"⚠️  S3 fetch error for {snapshot_id}: {e}")
             return None
 
-    def _list_s3_backups(self) -> list[dict]:
+    def _list_s3_backups(self) -> List[Dict[str, Any]]:
         """List all snapshots stored in S3 (paginated). Returns [] on error."""
         if not self.s3_client:
             return []
@@ -202,7 +203,7 @@ class BackupManager:
         )
         return True
 
-    def list_backups(self) -> list[dict]:
+    def list_backups(self) -> List[Dict[str, Any]]:
         """Return all available snapshots, merging in-memory + S3 sources.
 
         Deduplicates by snapshot_id (in-memory wins for metadata freshness).
