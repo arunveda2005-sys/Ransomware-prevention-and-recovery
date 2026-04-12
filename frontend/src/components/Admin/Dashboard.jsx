@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
-    Container, Grid, Paper, Typography, Button, Box, TextField, CircularProgress, Alert
+    Container, Grid, Paper, Typography, Button, Box, TextField, CircularProgress, Alert, Chip
 } from '@mui/material';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, Legend } from 'recharts';
 import { adminAPI } from '../../services/api';
+import { subscribeToBackupCreated } from '../../services/websocket';
 import { toast } from 'react-toastify';
 
 function Dashboard() {
@@ -20,6 +21,17 @@ function Dashboard() {
     useEffect(() => {
         loadStats();
         loadBackups();
+
+        // Auto-refresh backup list when backend fires an auto-backup (attack / ransomware)
+        const unsubscribe = subscribeToBackupCreated((data) => {
+            const trigger = data.trigger === 'ransomware_intercept'
+                ? '🛡️ Emergency backup secured BEFORE ransomware wipe!'
+                : `🛡️ Auto-backup triggered (${data.trigger}): ${data.records} records secured.`;
+            toast.info(trigger, { autoClose: 6000 });
+            loadBackups(); // Refresh the list so the new card appears immediately
+        });
+
+        return () => unsubscribe();
     }, []);
 
     const loadStats = async () => {
@@ -371,6 +383,14 @@ function Dashboard() {
                                             <Typography variant="caption" display="block" sx={{ mb: 1, color: '#666' }}>
                                                 {new Date(backup.timestamp).toLocaleString()}
                                             </Typography>
+                                            {backup.source && (
+                                                <Chip
+                                                    label={backup.source === 's3' ? '☁️ S3' : backup.source === 'memory+s3' ? '☁️ S3 + Memory' : '💾 Memory'}
+                                                    size="small"
+                                                    color={backup.source.includes('s3') ? 'success' : 'default'}
+                                                    sx={{ mb: 1 }}
+                                                />
+                                            )}
                                             <Button 
                                                 size="small" 
                                                 variant="contained" 

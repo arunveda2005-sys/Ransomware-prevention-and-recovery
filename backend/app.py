@@ -97,14 +97,32 @@ def emit_security_state():
 
 
 def set_security_state(mode, message, safe_mode=None, incident=None):
-    # 🔥 ZERO TRUST DEFENSE: Automate backup instantly on attack detection
+    # 🔥 ZERO TRUST DEFENSE: Auto-backup instantly on first attack signal
     if mode in ['UNDER_ATTACK', 'BREACH_CONFIRMED']:
         try:
             snapshot_id, users_count, products_count = backup_manager.create_snapshot()
-            print(f"🛡️ AUTO-BACKUP TRIGGERED: Snapshot {snapshot_id} secured {users_count+products_count} records automatically.")
-            # Ensure admin sees the new backup if they check the list
+            total = users_count + products_count
+            print(f"🛡️ AUTO-BACKUP TRIGGERED: Snapshot {snapshot_id} secured {total} records ({users_count} users, {products_count} products).")
+            # Audit the auto-backup in the immutable blockchain log
+            blockchain_logger.log_threat_event({
+                'type': 'auto_backup',
+                'event': 'Zero-Trust auto-backup triggered by security state change',
+                'snapshot_id': snapshot_id,
+                'records_secured': total,
+                'trigger_mode': mode,
+                'timestamp': datetime.now().isoformat()
+            })
+            socketio.emit('backup_created', {
+                'snapshot_id': snapshot_id,
+                'records': total,
+                'trigger': mode,
+                'timestamp': datetime.now().isoformat()
+            }, room=ADMIN_MONITORING_ROOM)
+        except RuntimeError as e:
+            # Expected when DB is already empty (e.g. post-ransomware wipe)
+            print(f"⚠️  Auto-backup skipped — {e}")
         except Exception as e:
-            print(f"Auto-backup failed: {e}")
+            print(f"❌ Auto-backup failed unexpectedly: {e}")
 
     SECURITY_STATE['mode'] = mode
     SECURITY_STATE['message'] = message
@@ -378,25 +396,62 @@ def get_security_status():
 
 @app.route('/api/attacker/ransomware', methods=['POST'])
 def simulate_ransomware():
-    """Simulate Ransomware Wipe (DEMO PURPOSE ONLY)"""
-    # 🛡️ DEFENSIVE MEASURE: Analyze pre-execution signature & auto-backup
-    # In a real system, the EDR/ML detects the ransomware behavior and instantly air-gaps the data.
-    try:
-        snapshot_id, users, products = backup_manager.create_snapshot()
-        print(f"🛡️ ZERO-TRUST HEURISTIC: Ransomware execution pattern detected! Data automatically secured to {snapshot_id}")
-    except:
-        pass
+    """Simulate Ransomware Wipe (DEMO PURPOSE ONLY)
 
-    db.users.delete_many({})
-    db.products.delete_many({})
-    
+    CRITICAL ORDER:
+      1. Snapshot FIRST (while data still exists) → saved to enclave + S3
+      2. Block attacker IP
+      3. Wipe the database
+      4. Change security state to BREACH_CONFIRMED
+
+    This guarantees the recovery point always contains real data.
+    """
     attacker_ip = request.headers.get('X-Mock-IP', request.remote_addr)
+
+    # ── Step 1: Air-gap the data BEFORE the wipe ──────────────────────────
+    snapshot_id = None
+    try:
+        snapshot_id, users_count, products_count = backup_manager.create_snapshot()
+        print(
+            f"🛡️ ZERO-TRUST HEURISTIC: Ransomware pattern detected! "
+            f"Emergency snapshot {snapshot_id} secured "
+            f"{users_count} users + {products_count} products BEFORE wipe."
+        )
+        # Blockchain-audit the emergency snapshot
+        blockchain_logger.log_threat_event({
+            'type': 'emergency_backup',
+            'event': 'Pre-ransomware emergency snapshot taken',
+            'snapshot_id': snapshot_id,
+            'attacker_ip': attacker_ip,
+            'users_secured': users_count,
+            'products_secured': products_count,
+            'timestamp': datetime.now().isoformat()
+        })
+        socketio.emit('backup_created', {
+            'snapshot_id': snapshot_id,
+            'records': users_count + products_count,
+            'trigger': 'ransomware_intercept',
+            'timestamp': datetime.now().isoformat()
+        }, room=ADMIN_MONITORING_ROOM)
+    except RuntimeError as e:
+        print(f"⚠️  Pre-ransomware snapshot skipped — {e}")
+    except Exception as e:
+        print(f"❌ Pre-ransomware snapshot failed: {e}")
+
+    # ── Step 2: Block the attacker ─────────────────────────────────────────
     block_ip_address(
         attacker_ip,
         reason='Ransomware attack executed - DB Wiped',
         risk_score=1.0,
         source='system_b'
     )
+
+    # ── Step 3: Execute the destructive wipe ──────────────────────────────
+    db.users.delete_many({})
+    db.products.delete_many({})
+
+    # ── Step 4: Update security state (auto-backup inside will now skip ──
+    #           because DB is already empty, as expected)
     set_security_state(
         'BREACH_CONFIRMED',
         'SYSTEM FAILURE: Ransomware script executed. Database collections wiped.',
@@ -407,7 +462,13 @@ def simulate_ransomware():
             'reasoning': 'Database wiped by ransomware'
         }
     )
-    return jsonify({'message': 'RANSOMWARE SUCCESSFUL: Database encrypted and destroyed.'}), 200
+
+    response_data = {'message': 'RANSOMWARE SUCCESSFUL: Database encrypted and destroyed.'}
+    if snapshot_id:
+        response_data['recovery_snapshot'] = snapshot_id
+        response_data['recovery_note'] = 'Zero-Trust intercepted: a clean snapshot was secured BEFORE the wipe. Restore is available.'
+
+    return jsonify(response_data), 200
 
 
 # ==================== AUTH DECORATORS ====================

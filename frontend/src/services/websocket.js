@@ -8,6 +8,7 @@ let canaryListeners = [];
 let honeytokenListeners = [];
 let securityStateListeners = [];
 let blockedIpListeners = [];
+let backupCreatedListeners = [];
 
 export const initWebSocket = (token) => {
     if (socket) {
@@ -54,6 +55,11 @@ export const initWebSocket = (token) => {
         blockedIpListeners.forEach(listener => listener(data));
     });
 
+    socket.on('backup_created', (data) => {
+        console.log('🛡️ Auto-backup created:', data);
+        backupCreatedListeners.forEach(listener => listener(data));
+    });
+
     return socket;
 };
 
@@ -98,6 +104,14 @@ export const subscribeToBlockedIps = (callback) => {
     };
 };
 
+export const subscribeToBackupCreated = (callback) => {
+    backupCreatedListeners.push(callback);
+
+    return () => {
+        backupCreatedListeners = backupCreatedListeners.filter(l => l !== callback);
+    };
+};
+
 export const disconnectWebSocket = () => {
     if (socket) {
         socket.disconnect();
@@ -109,4 +123,5 @@ export const disconnectWebSocket = () => {
     honeytokenListeners = [];
     securityStateListeners = [];
     blockedIpListeners = [];
+    backupCreatedListeners = [];
 };
